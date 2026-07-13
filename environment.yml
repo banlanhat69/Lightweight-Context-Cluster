@@ -15,6 +15,7 @@ dependencies:
       - einops
       - fvcore
       - matplotlib
+      - numpy
       - pandas
       - pypdf
       - pyyaml

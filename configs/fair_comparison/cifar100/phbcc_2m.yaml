@@ -1,0 +1,10 @@
+_base_: ../cifar10/phbcc_2m.yaml
+
+experiment:
+  name: fair_cifar100_phbcc_2m
+
+data:
+  name: cifar100
+
+model:
+  num_classes: 100

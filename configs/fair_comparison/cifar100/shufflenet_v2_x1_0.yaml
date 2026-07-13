@@ -1,0 +1,10 @@
+_base_: ../cifar10/shufflenet_v2_x1_0.yaml
+
+experiment:
+  name: fair_cifar100_shufflenet_v2_x1_0
+
+data:
+  name: cifar100
+
+model:
+  num_classes: 100

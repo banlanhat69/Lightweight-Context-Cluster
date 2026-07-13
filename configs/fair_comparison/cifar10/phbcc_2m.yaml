@@ -1,0 +1,4 @@
+_base_: ../../hbcc_accuracy_phbcc_2m.yaml
+
+experiment:
+  name: fair_cifar10_phbcc_2m

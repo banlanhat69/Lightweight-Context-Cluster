@@ -8,9 +8,48 @@ import yaml
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
-    with Path(path).open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return cfg or {}
+    """Load a YAML config, resolving optional ``_base_`` inheritance.
+
+    Base paths are resolved relative to the YAML file that declares them. A
+    string loads one base, while a list loads and merges bases from left to
+    right. The child config is applied last. This lets controlled experiments
+    share one data/training recipe instead of duplicating it across models.
+    """
+
+    return _load_config(Path(path).resolve(), stack=())
+
+
+def _load_config(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
+    if path in stack:
+        chain = " -> ".join(str(item) for item in (*stack, path))
+        raise ValueError(f"Circular config inheritance detected: {chain}")
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with path.open("r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f)
+    if loaded is None:
+        raw: dict[str, Any] = {}
+    elif isinstance(loaded, dict):
+        raw = loaded
+    else:
+        raise ValueError(f"Config root must be a mapping: {path}")
+
+    base_value = raw.pop("_base_", None)
+    if base_value is None:
+        return raw
+    base_items = base_value if isinstance(base_value, list) else [base_value]
+    if not all(isinstance(item, str) for item in base_items):
+        raise ValueError(f"_base_ must be a path or list of paths: {path}")
+
+    merged: dict[str, Any] = {}
+    next_stack = (*stack, path)
+    for item in base_items:
+        base_path = Path(item)
+        if not base_path.is_absolute():
+            base_path = path.parent / base_path
+        merged = deep_update(merged, _load_config(base_path.resolve(), next_stack))
+    return deep_update(merged, raw)
 
 
 def save_config(config: dict[str, Any], path: str | Path) -> None:

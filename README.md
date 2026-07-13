@@ -30,6 +30,7 @@ When `conda activate` is unreliable, call the interpreter directly:
 - Optional RGB+XY coordinate augmentation.
 - Early reducer schedule for CIFAR: `32 -> 16 -> 8 -> 4 -> 2`.
 - HBCC-Latency Tiny/Small configs.
+- P-HBCC-2M progressive-capacity architecture with fewer than 2M parameters on CIFAR-10/100.
 - Current-reference HBCC config that intentionally keeps the first cluster stage at `32x32`.
 - Local branch ablations: identity, DWConv, fixed LBPConv.
 - Similarity ablations: cosine and simulated Hamming with STE.
@@ -37,12 +38,15 @@ When `conda activate` is unreliable, call the interpreter directly:
 - CE-only and KD training.
 - Benchmark protocol for batch `1, 16, 64, 128`, strict latency, streaming throughput, peak memory, FLOPs best effort and torch operator profile.
 - Pareto report generation from JSON benchmark records.
+- Architecture-controlled CIFAR configs with one inherited augmentation/training recipe and paired-seed runner.
 
 ## Quick Checks
 
 ```powershell
 & D:\Anaconda\envs\CoC\python.exe -m pytest
 & D:\Anaconda\envs\CoC\python.exe tools\shape_trace.py --config configs\hbcc_latency_tiny.yaml
+& D:\Anaconda\envs\CoC\python.exe tools\shape_trace.py --config configs\hbcc_accuracy_phbcc_2m.yaml
+& D:\Anaconda\envs\CoC\python.exe tools\run_fair_comparison.py --dataset cifar10 --validate-only
 & D:\Anaconda\envs\CoC\python.exe tools\benchmark.py --config configs\smoke.yaml --batch-sizes 1 4 --warmup 2 --runs 3
 ```
 
@@ -108,6 +112,33 @@ Quick CIFAR-100 smoke check:
 ```powershell
 & D:\Anaconda\envs\CoC\python.exe tools\run_cifar100_experiments.py --smoke --only resnet18_cifar100 hbcc_latency_tiny_cifar100 --skip-kd
 ```
+
+## Fair Architecture Comparison
+
+The primary architecture table uses one shared paper-inspired recipe under
+`configs/fair_comparison`. Its resource-conscious default is five models
+(ResNet-18, MobileNetV2, CoC, HBCC-Small and P-HBCC-2M) across three paired
+seeds: 15 training runs of 200 epochs instead of the optional 8-model/5-seed
+matrix. The
+recipe follows the augmentation list in Context Cluster section 4.1 with a
+CIFAR RandomCrop adaptation; RandAugment is disabled. The runner validates that
+the effective `data`, `train` and protocol blocks are identical before launch.
+
+```powershell
+& D:\Anaconda\envs\CoC\python.exe tools\run_fair_comparison.py `
+  --dataset cifar10 `
+  --benchmark
+```
+
+Use `--dataset cifar100` for the corresponding CIFAR-100 matrix. The training
+seed controls model initialization, DataLoader workers/order and independent
+MixUp/CutMix RNG streams; `data.split_seed` remains fixed at 42. The recipe is
+paper-inspired rather than an exact ImageNet reproduction: it uses CIFAR,
+200 epochs, batch size 128 and no EMA. See
+`configs/fair_comparison/README.md` for the fairness contract.
+
+An executable notebook with safe smoke defaults, full paired-seed controls and
+result aggregation is available at `notebooks/phbcc_2m_fair_training.ipynb`.
 
 ## Benchmark Matrix
 

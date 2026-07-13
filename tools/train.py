@@ -3,16 +3,27 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import random
 import sys
 import time
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+from torch.amp import GradScaler
 
 from lightweight_hbcc.config import apply_overrides, load_config, save_config
 from lightweight_hbcc.data import build_loaders, num_classes_for_dataset
-from lightweight_hbcc.engine import evaluate, load_checkpoint, resolve_device, save_checkpoint, train_one_epoch, write_metrics
+from lightweight_hbcc.engine import (
+    evaluate,
+    load_checkpoint,
+    resolve_device,
+    save_checkpoint,
+    seed_everything,
+    train_one_epoch,
+    write_metrics,
+)
 from lightweight_hbcc.losses import DistillationLoss
 from lightweight_hbcc.models import build_model
 
@@ -35,12 +46,37 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_seed_config(cfg: dict[str, Any]) -> tuple[int, int, bool]:
+    """Resolve run and loader seeds, with data.loader_seed as the only explicit override."""
+
+    train_cfg = cfg.setdefault("train", {})
+    data_cfg = cfg.setdefault("data", {})
+    seed = int(train_cfg.get("seed", 42))
+    deterministic = bool(train_cfg.get("deterministic", False))
+    loader_seed = int(data_cfg.get("loader_seed", seed))
+    train_cfg["seed"] = seed
+    data_cfg["loader_seed"] = loader_seed
+    return seed, loader_seed, deterministic
+
+
+def is_controlled_comparison(cfg: dict[str, Any]) -> bool:
+    purpose = str(cfg.get("protocol", {}).get("purpose", "")).lower()
+    return "architecture_comparison" in purpose or "compare_model_architectures" in purpose
+
+
 def main() -> None:
     args = parse_args()
     cfg = apply_overrides(load_config(args.config), args.override)
     dataset_name = cfg.get("data", {}).get("name", "cifar10")
     cfg.setdefault("model", {})["num_classes"] = cfg["model"].get("num_classes", num_classes_for_dataset(dataset_name))
-    train_cfg = cfg.get("train", {})
+    seed, loader_seed, deterministic = resolve_seed_config(cfg)
+    train_cfg = cfg["train"]
+    seed_everything(seed, deterministic=deterministic)
+    if args.resume and is_controlled_comparison(cfg):
+        raise ValueError(
+            "Controlled-comparison runs do not support --resume because optimizer, scheduler, "
+            "DataLoader and augmentation RNG states are not restored. Start a fresh paired-seed run."
+        )
     skip_test = args.skip_test or bool(train_cfg.get("skip_test", False))
     device = resolve_device(args.device)
     output_dir = Path(args.output) / cfg.get("experiment", {}).get("name", Path(args.config).stem)
@@ -54,7 +90,11 @@ def main() -> None:
                 stale_path.unlink()
 
     setup_start = time.perf_counter()
-    print(f"setup: dataset={dataset_name} output={output_dir} device={device}", flush=True)
+    print(
+        f"setup: dataset={dataset_name} output={output_dir} device={device} "
+        f"seed={seed} loader_seed={loader_seed} deterministic={deterministic}",
+        flush=True,
+    )
     print("setup: building data loaders...", flush=True)
     train_loader, val_loader, test_loader = build_loaders(cfg.get("data", {}), include_test=not skip_test)
     print(
@@ -66,6 +106,8 @@ def main() -> None:
     )
     print("setup: building model...", flush=True)
     model = build_model(cfg).to(device)
+    mix_rng = random.Random(seed + 1_000_003)
+    mix_torch_generator = torch.Generator(device=device).manual_seed(seed + 2_000_003)
     param_count = sum(p.numel() for p in model.parameters())
     print(f"setup: model ready params={param_count} elapsed={time.perf_counter() - setup_start:.1f}s", flush=True)
     if args.resume:
@@ -99,6 +141,7 @@ def main() -> None:
         label_smoothing=float(train_cfg.get("label_smoothing", 0.0)),
     )
     amp = bool(train_cfg.get("amp", True))
+    scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
     pruning_reg = None
     if cfg.get("model", {}).get("pruning_mask"):
         pruning_reg = (
@@ -119,6 +162,7 @@ def main() -> None:
             epoch,
             teacher=teacher,
             amp=amp,
+            scaler=scaler,
             limit_batches=args.limit_train_batches,
             pruning_regularization=pruning_reg,
             progress=not args.no_progress,
@@ -126,6 +170,8 @@ def main() -> None:
             cutmix_alpha=float(train_cfg.get("cutmix_alpha", 0.0)),
             cutmix_prob=float(train_cfg.get("cutmix_prob", 0.0)),
             num_classes=cfg["model"]["num_classes"],
+            mix_rng=mix_rng,
+            mix_torch_generator=mix_torch_generator,
         )
         val_metrics = evaluate(
             model,

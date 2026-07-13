@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random
 from typing import Any
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
@@ -16,6 +18,14 @@ STL10_MEAN = (0.4467, 0.4398, 0.4066)
 STL10_STD = (0.2603, 0.2566, 0.2713)
 
 
+def _seed_worker(_: int) -> None:
+    """Seed non-Torch RNGs from the deterministic DataLoader worker seed."""
+
+    worker_seed = torch.initial_seed() % (2**32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+
+
 def num_classes_for_dataset(name: str) -> int:
     name = name.lower()
     if name == "cifar10":
@@ -27,6 +37,17 @@ def num_classes_for_dataset(name: str) -> int:
     if name == "fake":
         return 10
     raise ValueError(f"Unsupported dataset: {name}")
+
+
+def _random_erasing_value(cfg: dict[str, Any]) -> float | str | tuple[float, ...]:
+    value = cfg.get("value", 0.0)
+    if isinstance(value, str):
+        if value.lower() != "random":
+            raise ValueError("random_erasing.value must be numeric, a channel tuple, or 'random'")
+        return "random"
+    if isinstance(value, (list, tuple)):
+        return tuple(float(item) for item in value)
+    return float(value)
 
 
 def _transforms(name: str, train: bool, augment: bool, cfg: dict[str, Any] | None = None) -> transforms.Compose:
@@ -73,7 +94,7 @@ def _transforms(name: str, train: bool, augment: bool, cfg: dict[str, Any] | Non
                         p=float(random_erasing.get("p", 0.25)),
                         scale=tuple(random_erasing.get("scale", [0.02, 0.2])),
                         ratio=tuple(random_erasing.get("ratio", [0.3, 3.3])),
-                        value=float(random_erasing.get("value", 0.0)),
+                        value=_random_erasing_value(random_erasing),
                     )
                 )
         return transforms.Compose(ops)
@@ -106,7 +127,7 @@ def _transforms(name: str, train: bool, augment: bool, cfg: dict[str, Any] | Non
                     p=float(random_erasing.get("p", 0.25)),
                     scale=tuple(random_erasing.get("scale", [0.02, 0.2])),
                     ratio=tuple(random_erasing.get("ratio", [0.3, 3.3])),
-                    value=float(random_erasing.get("value", 0.0)),
+                    value=_random_erasing_value(random_erasing),
                 )
             )
     return transforms.Compose(ops)
@@ -249,6 +270,10 @@ def build_loaders(cfg: dict[str, Any], include_test: bool = True) -> tuple[DataL
     test_batch_size = int(cfg.get("test_batch_size", val_batch_size))
     workers = int(cfg.get("workers", 2))
     pin_memory = bool(cfg.get("pin_memory", True))
+    loader_seed = int(cfg.get("loader_seed", 0))
+    train_generator = torch.Generator().manual_seed(loader_seed)
+    val_generator = torch.Generator().manual_seed(loader_seed + 1)
+    test_generator = torch.Generator().manual_seed(loader_seed + 2)
     train_loader = DataLoader(
         train_set,
         batch_size=batch_size,
@@ -256,6 +281,8 @@ def build_loaders(cfg: dict[str, Any], include_test: bool = True) -> tuple[DataL
         num_workers=workers,
         pin_memory=pin_memory,
         drop_last=bool(cfg.get("drop_last", True)),
+        worker_init_fn=_seed_worker,
+        generator=train_generator,
     )
     val_loader = DataLoader(
         val_set,
@@ -263,6 +290,8 @@ def build_loaders(cfg: dict[str, Any], include_test: bool = True) -> tuple[DataL
         shuffle=False,
         num_workers=workers,
         pin_memory=pin_memory,
+        worker_init_fn=_seed_worker,
+        generator=val_generator,
     )
     test_loader = None
     if test_set is not None:
@@ -272,5 +301,7 @@ def build_loaders(cfg: dict[str, Any], include_test: bool = True) -> tuple[DataL
             shuffle=False,
             num_workers=workers,
             pin_memory=pin_memory,
+            worker_init_fn=_seed_worker,
+            generator=test_generator,
         )
     return train_loader, val_loader, test_loader

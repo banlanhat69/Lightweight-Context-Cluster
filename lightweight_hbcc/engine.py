@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from torch import nn
 from torch.amp import GradScaler, autocast
@@ -17,6 +19,22 @@ from .metrics import AverageMeter, accuracy
 
 PROGRESS_BAR_FORMAT = "{desc}: {percentage:3.0f}%|{bar:12}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
 PROGRESS_NCOLS = 96
+
+
+def seed_everything(seed: int, deterministic: bool = False) -> None:
+    """Seed training RNGs and configure deterministic execution when requested."""
+
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(deterministic, warn_only=True)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = not deterministic
+        torch.backends.cudnn.deterministic = deterministic
 
 
 def resolve_device(device: str = "auto") -> torch.device:
@@ -41,12 +59,18 @@ def load_checkpoint(model: nn.Module, path: str | Path, device: torch.device, st
     return ckpt
 
 
-def _rand_bbox(height: int, width: int, lam: float) -> tuple[int, int, int, int]:
+def _rand_bbox(
+    height: int,
+    width: int,
+    lam: float,
+    rng: random.Random | None = None,
+) -> tuple[int, int, int, int]:
+    rng = rng or random
     cut_ratio = (1.0 - lam) ** 0.5
     cut_h = int(height * cut_ratio)
     cut_w = int(width * cut_ratio)
-    cy = random.randint(0, height - 1)
-    cx = random.randint(0, width - 1)
+    cy = rng.randint(0, height - 1)
+    cx = rng.randint(0, width - 1)
     y1 = max(cy - cut_h // 2, 0)
     y2 = min(cy + cut_h // 2, height)
     x1 = max(cx - cut_w // 2, 0)
@@ -62,22 +86,25 @@ def apply_mixup_cutmix(
     mixup_alpha: float = 0.0,
     cutmix_alpha: float = 0.0,
     cutmix_prob: float = 0.0,
+    rng: random.Random | None = None,
+    torch_generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    rng = rng or random
     use_mixup = mixup_alpha > 0.0
-    use_cutmix = cutmix_alpha > 0.0 and random.random() < cutmix_prob
+    use_cutmix = cutmix_alpha > 0.0 and rng.random() < cutmix_prob
     if not use_mixup and not use_cutmix:
         return images, target
-    index = torch.randperm(images.size(0), device=images.device)
+    index = torch.randperm(images.size(0), device=images.device, generator=torch_generator)
     target_a = smooth_one_hot(target, num_classes, label_smoothing)
     target_b = target_a[index]
     if use_cutmix:
-        lam = random.betavariate(cutmix_alpha, cutmix_alpha)
-        y1, y2, x1, x2 = _rand_bbox(images.shape[-2], images.shape[-1], lam)
+        lam = rng.betavariate(cutmix_alpha, cutmix_alpha)
+        y1, y2, x1, x2 = _rand_bbox(images.shape[-2], images.shape[-1], lam, rng=rng)
         images = images.clone()
         images[:, :, y1:y2, x1:x2] = images[index, :, y1:y2, x1:x2]
         lam = 1.0 - ((y2 - y1) * (x2 - x1) / float(images.shape[-2] * images.shape[-1]))
     else:
-        lam = random.betavariate(mixup_alpha, mixup_alpha)
+        lam = rng.betavariate(mixup_alpha, mixup_alpha)
         images = images * lam + images[index] * (1.0 - lam)
     mixed_target = target_a * lam + target_b * (1.0 - lam)
     return images, mixed_target
@@ -92,6 +119,7 @@ def train_one_epoch(
     epoch: int,
     teacher: nn.Module | None = None,
     amp: bool = True,
+    scaler: GradScaler | None = None,
     limit_batches: int | None = None,
     pruning_regularization: tuple[float, float] | None = None,
     progress: bool = True,
@@ -99,11 +127,14 @@ def train_one_epoch(
     cutmix_alpha: float = 0.0,
     cutmix_prob: float = 0.0,
     num_classes: int | None = None,
+    mix_rng: random.Random | None = None,
+    mix_torch_generator: torch.Generator | None = None,
 ) -> dict[str, float]:
     model.train()
     if teacher is not None:
         teacher.eval()
-    scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
+    if scaler is None:
+        scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
     loss_meter = AverageMeter()
     acc_meter = AverageMeter()
     start = time.perf_counter()
@@ -132,6 +163,8 @@ def train_one_epoch(
                 mixup_alpha=mixup_alpha,
                 cutmix_alpha=cutmix_alpha,
                 cutmix_prob=cutmix_prob,
+                rng=mix_rng,
+                torch_generator=mix_torch_generator,
             )
         optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():

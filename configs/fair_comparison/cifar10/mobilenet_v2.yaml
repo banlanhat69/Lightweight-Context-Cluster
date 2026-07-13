@@ -1,0 +1,6 @@
+_base_:
+  - ../../baselines/mobilenet_v2_cifar.yaml
+  - ../../recipes/cifar_coc_paper_inspired.yaml
+
+experiment:
+  name: fair_cifar10_mobilenet_v2

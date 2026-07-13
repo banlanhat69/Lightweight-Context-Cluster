@@ -198,6 +198,37 @@ def hbcc_current_reference(num_classes: int = 10, **kwargs) -> HBCCNet:
     )
 
 
+def phbcc_2m(num_classes: int = 10, **kwargs) -> HBCCNet:
+    """Progressive-capacity HBCC constrained to fewer than 2M CIFAR params."""
+
+    model_kwargs: dict[str, Any] = {
+        "use_coord": True,
+        "embed_dims": [56, 88, 176, 232],
+        "depths": [2, 2, 4, 1],
+        "mlp_ratios": [3.0, 3.0, 3.0, 2.5],
+        "heads": [2, 2, 4, 4],
+        "head_dim": [16, 16, 16, 16],
+        "proposals": [(2, 2), (2, 2), (2, 2), (2, 2)],
+        "folds": [(4, 4), (2, 2), (1, 1), (1, 1)],
+        "similarities": ["cosine", "cosine", "cosine", "cosine"],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.0],
+        "channel_shuffle": [True, True, False, False],
+        "norm": "bn",
+        "stem_patch_size": 3,
+        "stem_stride": 2,
+        "stem_padding": 1,
+        "down_patch_size": 3,
+        "down_stride": 2,
+        "down_padding": 1,
+        "drop_rate": 0.0,
+        "drop_path_rate": 0.10,
+    }
+    model_kwargs.update(kwargs)
+    return HBCCNet(num_classes=num_classes, **model_kwargs)
+
+
 def coc_cifar_baseline(num_classes: int = 10, **kwargs) -> HBCCNet:
     """CoC-style CIFAR baseline: RGB+XY, cluster blocks in every stage."""
 

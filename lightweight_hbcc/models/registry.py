@@ -11,7 +11,14 @@ from .baselines import (
     resnet18_stl10,
     shufflenet_v2_x1_0_cifar,
 )
-from .hbcc import HBCCNet, coc_cifar_baseline, hbcc_current_reference, hbcc_latency_small, hbcc_latency_tiny
+from .hbcc import (
+    HBCCNet,
+    coc_cifar_baseline,
+    hbcc_current_reference,
+    hbcc_latency_small,
+    hbcc_latency_tiny,
+    phbcc_2m,
+)
 from .official_context_cluster import (
     official_coc_medium,
     official_coc_small,
@@ -35,6 +42,7 @@ MODEL_REGISTRY: dict[str, Callable[..., nn.Module]] = {
     "hbcc_current_reference": hbcc_current_reference,
     "hbcc_latency_tiny": hbcc_latency_tiny,
     "hbcc_latency_small": hbcc_latency_small,
+    "phbcc_2m": phbcc_2m,
     "hbcc": HBCCNet,
 }
 

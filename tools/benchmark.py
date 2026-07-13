@@ -43,6 +43,10 @@ def main() -> None:
     record = {
         "model_name": cfg.get("model", {}).get("name", cfg.get("model", {}).get("type")),
         "config_id": name,
+        "protocol_name": cfg.get("protocol", {}).get("name"),
+        "protocol_canonical": cfg.get("protocol", {}).get("canonical"),
+        "effective_epochs": cfg.get("protocol", {}).get("effective_epochs", cfg.get("train", {}).get("epochs")),
+        "checkpoint": str(args.checkpoint) if args.checkpoint else None,
         "device": str(device),
         "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
         "torch_version": torch.__version__,

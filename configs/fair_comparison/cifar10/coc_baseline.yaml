@@ -1,0 +1,6 @@
+_base_:
+  - ../../coc_cifar_baseline.yaml
+  - ../../recipes/cifar_coc_paper_inspired.yaml
+
+experiment:
+  name: fair_cifar10_coc_baseline

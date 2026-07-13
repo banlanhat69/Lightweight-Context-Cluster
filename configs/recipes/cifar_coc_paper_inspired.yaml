@@ -1,0 +1,53 @@
+protocol:
+  name: cifar_coc_paper_inspired_200e_v1
+  purpose: resource_efficient_architecture_comparison_with_one_shared_recipe
+  canonical: true
+  effective_epochs: 200
+  deterministic_scope: augmentation_and_order_exact_model_kernels_best_effort_on_cuda
+  reference:
+    paper: Context Cluster, ICLR 2023
+    section: 4.1 Image Classification on ImageNet-1K
+    adaptation: CIFAR RandomCrop, 200 epochs, no EMA, batch size 128
+
+data:
+  name: cifar10
+  root: data
+  download: true
+  batch_size: 128
+  val_batch_size: 256
+  test_batch_size: 256
+  val_size: 5000
+  split_seed: 42
+  workers: 2
+  pin_memory: true
+  drop_last: true
+  augment: true
+  # RandAugment is omitted: Section 4.1 does not list it, and one shared
+  # paper-inspired protocol is preferred over an extra augmentation ablation.
+  randaugment:
+    enabled: false
+    num_ops: 2
+    magnitude: 9
+  random_erasing:
+    p: 0.25
+    scale: [0.02, 0.3333333333]
+    ratio: [0.3, 3.3]
+    value: random
+
+train:
+  seed: 17
+  deterministic: true
+  epochs: 200
+  warmup_epochs: 5
+  lr: 0.001
+  weight_decay: 0.05
+  label_smoothing: 0.1
+  # The released CoC training code defaults to MixUp alpha 0.8, CutMix alpha
+  # 1.0, and a 0.5 switch probability when both are active.
+  mixup_alpha: 0.8
+  cutmix_alpha: 1.0
+  cutmix_prob: 0.5
+  amp: true
+  kd_alpha: 0.0
+  kd_temperature: 4.0
+  skip_test: false
