@@ -14,7 +14,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from lightweight_hbcc import data
-from lightweight_hbcc.config import deep_update, load_config
+from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.engine import apply_mixup_cutmix
 from lightweight_hbcc.models import build_model
 from tools.run_fair_comparison import (
@@ -182,7 +182,7 @@ def test_fair_comparison_configs_share_the_exact_controlled_recipe(dataset: str)
 
     assert len(transform_signatures) == 1
     assert "RandAugment" not in next(iter(transform_signatures))
-    assert expected["protocol"]["name"] == "cifar_coc_paper_inspired_200e_v1"
+    assert expected["protocol"]["name"] == "cifar_coc_paper_inspired_300e_v1"
     assert expected["data"]["randaugment"] == {"enabled": False, "num_ops": 2, "magnitude": 9}
     assert expected["data"]["random_erasing"] == {
         "p": 0.25,
@@ -190,13 +190,21 @@ def test_fair_comparison_configs_share_the_exact_controlled_recipe(dataset: str)
         "ratio": [0.3, 3.3],
         "value": "random",
     }
-    assert expected["train"]["epochs"] == CANONICAL_EPOCHS == 200
+    assert expected["train"]["epochs"] == CANONICAL_EPOCHS == 300
     assert expected["train"]["warmup_epochs"] == 5
     assert expected["train"]["mixup_alpha"] == 0.8
     assert expected["train"]["cutmix_alpha"] == 1.0
     assert expected["train"]["cutmix_prob"] == 0.5
     assert expected["train"]["kd_alpha"] == 0.0
-    assert list(CORE_MODELS) == ["resnet18", "mobilenet_v2", "coc_baseline", "hbcc_small", "phbcc_2m"]
+    assert list(CORE_MODELS) == [
+        "resnet18",
+        "mobilenet_v2",
+        "shufflenet_v2_x1_0",
+        "coc_baseline",
+        "hbcc_small",
+        "hbcc_medium",
+    ]
+    assert "phbcc_2m" not in CORE_MODELS
     validated = validate_controlled_configs(dataset, config_paths(dataset, FAIR_MODELS))
     assert set(validated) == set(FAIR_MODELS)
 
@@ -309,6 +317,8 @@ def test_worker_seed_pairs_stochastic_augmentation_batches() -> None:
 def test_runner_marks_short_runs_noncanonical_and_rejects_overwrites(tmp_path: Path) -> None:
     smoke_args = SimpleNamespace(data_root="data", smoke=True, epochs=None)
     overrides = _overrides(smoke_args, "smoke_run", 17)
+    assert "data.loader_seed=17" in overrides
+    assert "train.seed=17" in overrides
     assert "train.epochs=1" in overrides
     assert "protocol.effective_epochs=1" in overrides
     assert f"protocol.name={CANONICAL_PROTOCOL_NAME}_smoke" in overrides
@@ -321,17 +331,17 @@ def test_runner_marks_short_runs_noncanonical_and_rejects_overwrites(tmp_path: P
     assert run_suffix(canonical_args) == ""
     short_args = SimpleNamespace(data_root="data", smoke=False, epochs=30)
     assert run_suffix(short_args) == "_e30"
-    old_300_args = SimpleNamespace(data_root="data", smoke=False, epochs=300)
-    old_300_overrides = _overrides(old_300_args, "old_300_run", 17)
-    assert run_suffix(old_300_args) == "_e300"
-    assert f"protocol.name={CANONICAL_PROTOCOL_NAME}_epochs300" in old_300_overrides
-    assert "protocol.canonical=false" in old_300_overrides
-    validate_seeds([17, 29, 43])
+    old_200_args = SimpleNamespace(data_root="data", smoke=False, epochs=200)
+    old_200_overrides = _overrides(old_200_args, "old_200_run", 17)
+    assert run_suffix(old_200_args) == "_e200"
+    assert f"protocol.name={CANONICAL_PROTOCOL_NAME}_epochs200" in old_200_overrides
+    assert "protocol.canonical=false" in old_200_overrides
+    validate_seeds([17])
     with pytest.raises(ValueError, match="Duplicate seeds"):
         validate_seeds([17, 17])
-    validate_models(["resnet18", "phbcc_2m"])
+    validate_models(["resnet18", "hbcc_small"])
     with pytest.raises(ValueError, match="Duplicate models"):
-        validate_models(["phbcc_2m", "phbcc_2m"])
+        validate_models(["hbcc_small", "hbcc_small"])
 
     existing = tmp_path / "existing_run"
     existing.mkdir()
@@ -341,19 +351,33 @@ def test_runner_marks_short_runs_noncanonical_and_rejects_overwrites(tmp_path: P
     ensure_run_target(str(tmp_path), "existing_run", force=False, dry_run=True)
 
 
-def test_runner_defaults_to_the_resource_conscious_15_run_matrix(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runner_defaults_to_the_old_hbcc_6_run_matrix(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["run_fair_comparison.py"])
     args = parse_args()
     assert tuple(args.models) == CORE_MODELS
-    assert tuple(args.seeds) == DEFAULT_SEEDS
-    assert len(args.models) * len(args.seeds) == 15
-    assert args.output == "runs_fair_paper_inspired_200e"
-    assert args.benchmark_output == "results/fair_paper_inspired_200e"
+    assert tuple(args.seeds) == DEFAULT_SEEDS == (17,)
+    assert len(args.models) * len(args.seeds) == 6
+    assert args.output == "runs_fair_paper_inspired_300e"
+    assert args.benchmark_output == "results/fair_paper_inspired_300e"
     assert args.skip_completed is True
 
 
+def test_single_seed_notebook_does_not_report_fake_uncertainty() -> None:
+    notebook = json.loads(Path("notebooks/hbcc_fair_training.ipynb").read_text(encoding="utf-8"))
+    code = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if cell.get("cell_type") == "code"
+    )
+    assert "accuracy_seed17" in code
+    assert "single_seed_differences" in code
+    assert "std_acc1" not in code
+    assert "ci95_" not in code
+    assert "runs_fair_paper_inspired_300e" in code
+
+
 def test_completed_run_reuse_requires_matching_metadata_and_artifacts(tmp_path: Path) -> None:
-    experiment_name = "fair_cifar10_phbcc_2m_seed17"
+    experiment_name = "fair_cifar10_hbcc_small_seed17"
     args = SimpleNamespace(
         output=str(tmp_path / "runs"),
         benchmark_output=str(tmp_path / "benchmarks"),
@@ -364,21 +388,24 @@ def test_completed_run_reuse_requires_matching_metadata_and_artifacts(tmp_path: 
     )
     run_dir = Path(args.output) / experiment_name
     run_dir.mkdir(parents=True)
-    (run_dir / "config.yaml").write_text(
-        "\n".join(
-            [
-                f"experiment:\n  name: {experiment_name}",
-                "data:\n  name: cifar10\n  root: data",
-                f"train:\n  seed: 17\n  epochs: {CANONICAL_EPOCHS}",
-                f"protocol:\n  name: {CANONICAL_PROTOCOL_NAME}\n  canonical: true",
-            ]
-        ),
-        encoding="utf-8",
+    completed_cfg = deep_update(
+        load_config("configs/fair_comparison/cifar10/hbcc_small.yaml"),
+        {
+            "experiment": {"name": experiment_name},
+            "data": {"root": "data", "loader_seed": 17},
+            "train": {"seed": 17},
+        },
     )
+    save_config(completed_cfg, run_dir / "config.yaml")
     (run_dir / "best.pth").write_bytes(b"checkpoint")
     (run_dir / "test_metrics.json").write_text(json.dumps({"test_acc1": 90.0}), encoding="utf-8")
     assert completed_run_matches(args, experiment_name, 17)
     assert not completed_run_matches(args, experiment_name, 29)
+
+    drifted_cfg = deep_update(completed_cfg, {"data": {"random_erasing": {"p": 0.0}}})
+    save_config(drifted_cfg, run_dir / "config.yaml")
+    assert not completed_run_matches(args, experiment_name, 17)
+    save_config(completed_cfg, run_dir / "config.yaml")
 
     benchmark_dir = Path(args.benchmark_output) / args.dataset
     benchmark_dir.mkdir(parents=True)

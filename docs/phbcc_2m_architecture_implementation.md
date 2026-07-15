@@ -1,6 +1,8 @@
 # P-HBCC-2M: đặc tả kiến trúc và hướng dẫn cài đặt
 
-> Trạng thái: **đã cài đặt và kiểm thử về mặt phần mềm**; độ chính xác thực nghiệm vẫn chưa được xác nhận bằng huấn luyện nhiều seed.
+> Trạng thái: **đã dừng làm hướng chính** vì kết quả thực nghiệm chưa hiệu quả.
+> Mã và config được giữ để tái lập, nhưng pipeline/report mặc định đã quay lại
+> HBCC-Small/Medium cũ với augmentation công bằng cho toàn bộ đối chứng.
 >
 > Mục tiêu: giữ tổng số tham số dưới `2.0M` trên cả CIFAR-10 và CIFAR-100, đồng thời giảm rủi ro mất độ chính xác so với việc thay toàn bộ toán tử HBCC hiện tại.
 
@@ -377,9 +379,9 @@ Khi mục tiêu chính là accuracy và số tham số, vẫn nên báo cáo th�
 
 ## 10. Bộ so sánh công bằng đã cài đặt
 
-Các config tại `configs/fair_comparison/cifar10` và `configs/fair_comparison/cifar100` vẫn hỗ trợ tám kiến trúc, nhưng ma trận mặc định chỉ giữ năm mô hình cốt lõi: ResNet-18, MobileNetV2, CoC CIFAR baseline, HBCC-Small và P-HBCC-2M. ShuffleNetV2, HBCC-Small+ và HBCC-Medium là mở rộng tùy chọn, không tiêu tốn tài nguyên nếu không được truyền qua `--models`.
+Các config tại `configs/fair_comparison/cifar10` và `configs/fair_comparison/cifar100` vẫn hỗ trợ tám kiến trúc, nhưng ma trận report mặc định đã quay lại sáu mô hình cũ: ResNet-18, MobileNetV2, ShuffleNetV2, CoC CIFAR baseline, HBCC-Small và HBCC-Medium. HBCC-Small+ và P-HBCC-2M chỉ còn là artifact thử nghiệm tùy chọn.
 
-Tất cả kế thừa **một** recipe duy nhất tại `configs/recipes/cifar_coc_paper_inspired.yaml`. Recipe tham khảo Context Cluster (ICLR 2023), Mục 4.1: horizontal flip, Random Erasing, MixUp, CutMix và label smoothing; RandomCrop là thích nghi cho CIFAR. RandAugment được tắt. Đây là protocol paper-inspired chứ không phải tái lập ImageNet nguyên bản vì dùng 200 epochs, batch 128 và không EMA. Runner kiểm tra `data`, `train` và metadata protocol phải giống hệt nhau trước khi khởi chạy:
+Tất cả kế thừa **một** recipe duy nhất tại `configs/recipes/cifar_coc_paper_inspired.yaml`. Recipe tham khảo Context Cluster (ICLR 2023), Mục 4.1: horizontal flip, Random Erasing, MixUp, CutMix và label smoothing; RandomCrop là thích nghi cho CIFAR. RandAugment được tắt. Đây là protocol paper-inspired chứ không phải tái lập ImageNet nguyên bản vì dùng 300 epochs, batch 128 và không EMA. Runner kiểm tra `data`, `train` và metadata protocol phải giống hệt nhau trước khi khởi chạy:
 
 ```powershell
 & D:\Anaconda\envs\CoC\python.exe tools\run_fair_comparison.py `
@@ -387,7 +389,7 @@ Tất cả kế thừa **một** recipe duy nhất tại `configs/recipes/cifar_
   --validate-only
 ```
 
-Chạy bảng chính với ba paired seeds mặc định `17, 29, 43`:
+Chạy bảng chính với một shared seed mặc định `17`:
 
 ```powershell
 & D:\Anaconda\envs\CoC\python.exe tools\run_fair_comparison.py `
@@ -395,13 +397,13 @@ Chạy bảng chính với ba paired seeds mặc định `17, 29, 43`:
   --benchmark
 ```
 
-Đổi thành `--dataset cifar100` để chạy bộ config 100 lớp. Thiết kế này có 5 mô hình x 3 seeds x 200 epochs = 3.000 epoch-runs, giảm 75% so với ma trận mở rộng 8 x 5 x 300 = 12.000 epoch-runs. Mỗi run có hậu tố `_seedN`, nên checkpoint giữa các seed không ghi đè nhau.
+Đổi thành `--dataset cifar100` để chạy bộ config 100 lớp. Thiết kế này có 6 mô hình × 1 seed × 300 epochs = 1.800 epoch-runs, giảm 85% so với ma trận mở rộng 8 × 5 × 300 = 12.000 epoch-runs. Mỗi run có hậu tố `_seed17`.
 
 ## 11. Giao thức đánh giá accuracy công bằng
 
 ### 11.1. Một protocol duy nhất
 
-Với ngân sách giới hạn, report chỉ dùng bảng **architecture-controlled paper-inspired**. Cả năm mô hình nhận cùng epoch, optimizer, augmentation, label smoothing, MixUp/CutMix và model-selection protocol. Không chạy thêm bảng Basic/Strong hoặc best-recipe; nếu có kết quả cũ từ recipe khác, không trộn chúng vào bảng chính.
+Với ngân sách giới hạn, report chỉ dùng bảng **architecture-controlled paper-inspired**. Cả sáu mô hình nhận cùng epoch, optimizer, augmentation, label smoothing, MixUp/CutMix và model-selection protocol. Không chạy thêm bảng Basic/Strong hoặc best-recipe; nếu có kết quả cũ từ recipe khác, không trộn chúng vào bảng chính.
 
 ### 11.2. Ma trận thí nghiệm tối thiểu
 
@@ -409,21 +411,22 @@ Với ngân sách giới hạn, report chỉ dùng bảng **architecture-control
 |---|---|---|
 | A | ResNet-18 | CNN tham chiếu phổ biến |
 | B | MobileNetV2 | Baseline nhẹ theo số tham số |
-| C | CoC CIFAR baseline | Kiến trúc Context Cluster gốc |
-| D | HBCC-Small | HBCC hiện tại |
-| E | P-HBCC-2M | Mô hình đề xuất |
+| C | ShuffleNetV2 x1.0 | Baseline nhẹ gần HBCC-Small |
+| D | CoC CIFAR baseline | Kiến trúc Context Cluster gốc |
+| E | HBCC-Small | HBCC cũ, mô hình chính |
+| F | HBCC-Medium | HBCC cũ, capacity lớn hơn |
 
-HBCC-Small+, HBCC-Medium và ShuffleNetV2 chỉ nên chạy sau nếu reviewer yêu cầu hoặc kết quả chính chưa đủ rõ; chúng không thuộc ngân sách mặc định.
+HBCC-Small+ và P-HBCC-2M không thuộc bảng chính; chỉ chạy lại nếu cần tái lập lịch sử phát triển.
 
 ### 11.3. Số lần chạy và tiêu chí chấp nhận
 
-- Chạy đúng ba paired seeds mặc định cho toàn bộ năm mô hình; không lập bảng chính nếu thiếu bất kỳ run nào.
+- Chạy đúng seed `17` cho toàn bộ sáu mô hình; không lập bảng chính nếu thiếu bất kỳ run nào.
 - Giữ nguyên train/validation/test split giữa các mô hình.
 - Chọn checkpoint theo validation; chỉ đánh giá official test split bằng checkpoint tốt nhất.
-- Báo cáo `mean ± standard deviation`, không chỉ báo cáo run tốt nhất.
-- Nên kèm confidence interval của chênh lệch accuracy giữa P-HBCC-2M và HBCC-Small.
+- Báo cáo accuracy và chênh lệch trực tiếp tại seed 17.
+- Không báo mean, standard deviation, confidence interval hoặc ý nghĩa thống kê từ một seed.
 
-Tiêu chí chấp nhận đề xuất:
+Các tiêu chí P-HBCC dưới đây chỉ còn là tiêu chí lịch sử, không dùng để kết luận report:
 
 ```text
 params_total(CIFAR-100) < 2,000,000
@@ -433,7 +436,7 @@ P-HBCC-2M nằm trên hoặc gần Pareto frontier accuracy/parameters của nă
 
 Khoảng accuracy `94.1–94.5%` trên CIFAR-10 và `74.2–74.8%` trên CIFAR-100 chỉ nên được xem là **mục tiêu thiết kế**, không được đưa vào bảng kết quả như số đo thực nghiệm.
 
-Pipeline hiện đọc `train.seed`, seed Python, NumPy, PyTorch, CUDA và DataLoader worker/order. MixUp/CutMix dùng hai RNG riêng, nên stochastic depth của các kiến trúc khác nhau không làm lệch chuỗi augmentation cấp batch. Giữ `data.split_seed=42` cố định và chỉ thay `train.seed` theo paired seeds. Lưu ý `adaptive_avg_pool2d_backward_cuda` của phiên bản PyTorch hiện tại chưa deterministic tuyệt đối; paired seed kiểm soát augmentation/order nhưng không bảo đảm hai run GPU bitwise-identical. Runner từ chối seed trùng, đánh dấu smoke/epoch override là protocol không canonical và chặn `--resume` vì resume hiện chưa phục hồi toàn bộ RNG/optimizer state. Nếu job bị gián đoạn, chạy lại cùng lệnh: runner chỉ bỏ qua các run đã có đủ `config.yaml`, `best.pth`, `test_metrics.json` và khớp metadata; artifact dở dang vẫn bị từ chối.
+Pipeline hiện đọc `train.seed`, seed Python, NumPy, PyTorch, CUDA và DataLoader worker/order. MixUp/CutMix dùng hai RNG riêng, nên stochastic depth của các kiến trúc khác nhau không làm lệch chuỗi augmentation cấp batch. Giữ `data.split_seed=42`, `train.seed=17` và `data.loader_seed=17` cho mọi mô hình. Lưu ý `adaptive_avg_pool2d_backward_cuda` của phiên bản PyTorch hiện tại chưa deterministic tuyệt đối; shared seed kiểm soát augmentation/order nhưng không bảo đảm hai run GPU bitwise-identical. Runner đánh dấu smoke/epoch override là protocol không canonical và chặn `--resume` vì pipeline hiện chưa phục hồi đầy đủ optimizer/scheduler/RNG state. Nếu job bị gián đoạn, chạy lại cùng lệnh: runner chỉ bỏ qua các run đã có đủ `config.yaml`, `best.pth`, `test_metrics.json` và khớp chính xác toàn bộ `data`, `train`, `protocol`; artifact dở dang hoặc lệch augmentation vẫn bị từ chối.
 
 ## 12. Các rủi ro và kiểm tra bắt buộc
 
@@ -456,10 +459,10 @@ Pipeline hiện đọc `train.seed`, seed Python, NumPy, PyTorch, CUDA và DataL
 - [x] Kiểm tra tổng params CIFAR-10 là `1,953,056`.
 - [x] Kiểm tra cấu hình 100 lớp có tổng params là `1,974,026`.
 - [x] Benchmark static metrics và ghi rõ unsupported operators.
-- [ ] Huấn luyện năm mô hình cốt lõi bằng cùng recipe paper-inspired.
-- [ ] Hoàn tất đủ ba paired seeds `17, 29, 43` cho cả năm mô hình.
-- [ ] Báo cáo mean, standard deviation, parameter count và phép tính/latency.
-- [ ] Chỉ gọi P-HBCC-2M là mô hình cải tiến sau khi vượt tiêu chí chấp nhận đã đặt trước.
+- [ ] Huấn luyện sáu mô hình của report cũ bằng cùng recipe paper-inspired.
+- [ ] Hoàn tất seed `17` cho cả sáu mô hình ở 300 epochs.
+- [ ] Báo cáo accuracy seed 17, parameter count và phép tính/latency; không suy diễn thống kê nhiều seed.
+- [x] Loại P-HBCC-2M khỏi pipeline kết luận chính sau khi kết quả không hiệu quả.
 
 ## 14. Các file mã nguồn liên quan
 
@@ -476,5 +479,5 @@ Pipeline hiện đọc `train.seed`, seed Python, NumPy, PyTorch, CUDA và DataL
 - `tools/shape_trace.py`: kiểm tra kích thước tensor.
 - `tools/train.py`: huấn luyện và đánh giá.
 - `tools/benchmark.py`: đo params, phép tính, latency, throughput và memory.
-- `tools/run_fair_comparison.py`: preflight fairness và chạy paired seeds.
+- `tools/run_fair_comparison.py`: preflight fairness và chạy shared seed 17.
 - `tests/test_phbcc_and_fairness.py`: khóa kiến trúc, params, shape, recipe và RNG.

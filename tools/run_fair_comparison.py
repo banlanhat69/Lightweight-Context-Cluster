@@ -27,14 +27,18 @@ MODEL_CONFIGS = {
     "hbcc_medium": "hbcc_medium.yaml",
 }
 
-CORE_MODELS = (
+BASELINE_MODELS = (
     "resnet18",
     "mobilenet_v2",
+    "shufflenet_v2_x1_0",
     "coc_baseline",
-    "hbcc_small",
-    "phbcc_2m",
 )
-DEFAULT_SEEDS = (17, 29, 43)
+HBCC_MODELS = (
+    "hbcc_small",
+    "hbcc_medium",
+)
+CORE_MODELS = (*BASELINE_MODELS, *HBCC_MODELS)
+DEFAULT_SEEDS = (17,)
 RECIPE_PATH = Path("configs/recipes/cifar_coc_paper_inspired.yaml")
 _CANONICAL_RECIPE = load_config(RECIPE_PATH)
 CANONICAL_PROTOCOL_NAME = str(_CANONICAL_RECIPE["protocol"]["name"])
@@ -61,15 +65,18 @@ def run_suffix(args: argparse.Namespace) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train a resource-conscious CIFAR comparison with one paper-inspired recipe and paired seeds."
+        description=(
+            "Train the original HBCC-Small/Medium and report baselines with one shared "
+            "paper-inspired CIFAR recipe and one shared seed."
+        )
     )
     parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar10")
     parser.add_argument("--models", nargs="+", choices=sorted(MODEL_CONFIGS), default=list(CORE_MODELS))
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--data-root", default="data")
-    parser.add_argument("--output", default="runs_fair_paper_inspired_200e")
-    parser.add_argument("--benchmark-output", default="results/fair_paper_inspired_200e")
+    parser.add_argument("--output", default="runs_fair_paper_inspired_300e")
+    parser.add_argument("--benchmark-output", default="results/fair_paper_inspired_300e")
     parser.add_argument("--epochs", type=int, help="Apply the same epoch override to every selected model and seed.")
     parser.add_argument("--print-every", type=int, default=5)
     parser.add_argument("--progress", action="store_true")
@@ -175,14 +182,30 @@ def completed_run_matches(args: argparse.Namespace, experiment_name: str, seed: 
         return False
     epochs = effective_epochs(args)
     expected_canonical = not args.smoke and epochs == CANONICAL_EPOCHS
+    expected_recipe = _recipe_for_dataset(args.dataset)
+    expected_recipe = deep_update(
+        expected_recipe,
+        {
+            "data": {
+                "root": str(args.data_root),
+                "loader_seed": int(seed),
+            },
+            "train": {
+                "seed": int(seed),
+                "epochs": epochs,
+            },
+            "protocol": {
+                "name": expected_protocol_name(args),
+                "canonical": expected_canonical,
+                "effective_epochs": epochs,
+            },
+        },
+    )
     return (
         cfg.get("experiment", {}).get("name") == experiment_name
-        and cfg.get("data", {}).get("name") == args.dataset
-        and str(cfg.get("data", {}).get("root")) == str(args.data_root)
-        and int(cfg.get("train", {}).get("seed", -1)) == int(seed)
-        and int(cfg.get("train", {}).get("epochs", -1)) == epochs
-        and cfg.get("protocol", {}).get("name") == expected_protocol_name(args)
-        and bool(cfg.get("protocol", {}).get("canonical", False)) == expected_canonical
+        and cfg.get("data") == expected_recipe.get("data")
+        and cfg.get("train") == expected_recipe.get("train")
+        and cfg.get("protocol") == expected_recipe.get("protocol")
         and metrics.get("test_acc1") is not None
     )
 
@@ -206,6 +229,7 @@ def completed_benchmark_matches(args: argparse.Namespace, experiment_name: str) 
 def _overrides(args: argparse.Namespace, experiment_name: str, seed: int) -> list[str]:
     values = [
         f"data.root={args.data_root}",
+        f"data.loader_seed={seed}",
         f"train.seed={seed}",
         f"experiment.name={experiment_name}",
     ]
