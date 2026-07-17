@@ -381,7 +381,7 @@ Khi mục tiêu chính là accuracy và số tham số, vẫn nên báo cáo th�
 
 Các config tại `configs/fair_comparison/cifar10` và `configs/fair_comparison/cifar100` vẫn hỗ trợ tám kiến trúc, nhưng ma trận report mặc định đã quay lại sáu mô hình cũ: ResNet-18, MobileNetV2, ShuffleNetV2, CoC CIFAR baseline, HBCC-Small và HBCC-Medium. HBCC-Small+ và P-HBCC-2M chỉ còn là artifact thử nghiệm tùy chọn.
 
-Tất cả kế thừa **một** recipe duy nhất tại `configs/recipes/cifar_coc_paper_inspired.yaml`. Recipe tham khảo Context Cluster (ICLR 2023), Mục 4.1: horizontal flip, Random Erasing, MixUp, CutMix và label smoothing; RandomCrop là thích nghi cho CIFAR. RandAugment được tắt. Đây là protocol paper-inspired chứ không phải tái lập ImageNet nguyên bản vì dùng 300 epochs, batch 128 và không EMA. Runner kiểm tra `data`, `train` và metadata protocol phải giống hệt nhau trước khi khởi chạy:
+Tất cả kế thừa **một** recipe duy nhất tại `configs/recipes/cifar_coc_paper_inspired.yaml`. Recipe tham khảo Context Cluster (ICLR 2023), Mục 4.1: horizontal flip, Random Erasing, MixUp, CutMix và label smoothing; RandomCrop là thích nghi cho CIFAR. RandAugment được tắt. Đây là protocol paper-inspired chứ không phải tái lập ImageNet nguyên bản vì dùng 200 epochs, batch 128 và không EMA. Runner kiểm tra `data`, `train` và metadata protocol phải giống hệt nhau trước khi khởi chạy:
 
 ```powershell
 & D:\Anaconda\envs\CoC\python.exe tools\run_fair_comparison.py `
@@ -397,7 +397,7 @@ Chạy bảng chính với một shared seed mặc định `17`:
   --benchmark
 ```
 
-Đổi thành `--dataset cifar100` để chạy bộ config 100 lớp. Thiết kế này có 6 mô hình × 1 seed × 300 epochs = 1.800 epoch-runs, giảm 85% so với ma trận mở rộng 8 × 5 × 300 = 12.000 epoch-runs. Mỗi run có hậu tố `_seed17`.
+Đổi thành `--dataset cifar100` để chạy bộ config 100 lớp. Thiết kế này có 6 mô hình × 1 seed × 200 epochs = 1.200 epoch-runs, giảm 90% so với ma trận mở rộng 8 × 5 × 300 = 12.000 epoch-runs. Mỗi run có hậu tố `_seed17`.
 
 ## 11. Giao thức đánh giá accuracy công bằng
 
@@ -460,7 +460,7 @@ Pipeline hiện đọc `train.seed`, seed Python, NumPy, PyTorch, CUDA và DataL
 - [x] Kiểm tra cấu hình 100 lớp có tổng params là `1,974,026`.
 - [x] Benchmark static metrics và ghi rõ unsupported operators.
 - [ ] Huấn luyện sáu mô hình của report cũ bằng cùng recipe paper-inspired.
-- [ ] Hoàn tất seed `17` cho cả sáu mô hình ở 300 epochs.
+- [ ] Hoàn tất seed `17` cho cả sáu mô hình ở 200 epochs.
 - [ ] Báo cáo accuracy seed 17, parameter count và phép tính/latency; không suy diễn thống kê nhiều seed.
 - [x] Loại P-HBCC-2M khỏi pipeline kết luận chính sau khi kết quả không hiệu quả.
 

@@ -21,7 +21,7 @@ erasing, MixUp, CutMix và label smoothing. Phiên bản CIFAR dùng:
 RandAugment được tắt vì không được liệt kê trong phần mô tả augmentation của
 bài báo và không cần thêm một protocol ablation. Đây là recipe **paper-inspired**,
 không phải tái lập ImageNet nguyên bản: pipeline dùng CIFAR, batch size 128,
-300 epochs và không dùng EMA. Các thích nghi này được áp dụng giống hệt cho mọi
+200 epochs và không dùng EMA. Các thích nghi này được áp dụng giống hệt cho mọi
 kiến trúc.
 
 ## Ma trận tiết kiệm tài nguyên
@@ -36,8 +36,8 @@ Mặc định runner huấn luyện sáu mô hình đúng với bảng report c�
 - HBCC-Medium: cấu hình HBCC cũ có capacity lớn hơn.
 
 HBCC-Small+ và P-HBCC-2M vẫn được giữ để tái lập thử nghiệm cũ nhưng không thuộc
-bảng chính. Với một shared seed `17`, ma trận chính có 6 runs × 300 epochs =
-1.800 epoch-runs, giảm 85% so với thiết kế 8 × 5 × 300 = 12.000 epoch-runs.
+bảng chính. Với một shared seed `17`, ma trận chính có 6 runs × 200 epochs =
+1.200 epoch-runs, giảm 90% so với thiết kế 8 × 5 × 300 = 12.000 epoch-runs.
 
 ```powershell
 & D:\Anaconda\envs\CoC\python.exe tools\run_fair_comparison.py `
@@ -51,8 +51,8 @@ bảng chính. Với một shared seed `17`, ma trận chính có 6 runs × 300 
 ## Quy tắc báo cáo
 
 - Giữ `data.split_seed=42`; dùng `train.seed=17` và `data.loader_seed=17` cho mọi mô hình.
-- Chỉ dùng run có `protocol.name=cifar_coc_paper_inspired_300e_v1`,
-  `canonical=true` và đủ 300 epochs.
+- Chỉ dùng run có `protocol.name=cifar_coc_paper_inspired_200e_v1`,
+  `canonical=true` và đủ 200 epochs.
 - Nếu thiếu bất kỳ model/seed nào, không lập bảng xếp hạng chính.
 - Báo cáo test accuracy của `best.pth` và chênh lệch trực tiếp tại seed 17.
 - Một seed không cho phép ước lượng standard deviation, confidence interval hoặc ý nghĩa thống kê.

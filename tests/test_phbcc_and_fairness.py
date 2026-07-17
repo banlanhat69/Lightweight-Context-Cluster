@@ -182,7 +182,7 @@ def test_fair_comparison_configs_share_the_exact_controlled_recipe(dataset: str)
 
     assert len(transform_signatures) == 1
     assert "RandAugment" not in next(iter(transform_signatures))
-    assert expected["protocol"]["name"] == "cifar_coc_paper_inspired_300e_v1"
+    assert expected["protocol"]["name"] == "cifar_coc_paper_inspired_200e_v1"
     assert expected["data"]["randaugment"] == {"enabled": False, "num_ops": 2, "magnitude": 9}
     assert expected["data"]["random_erasing"] == {
         "p": 0.25,
@@ -190,7 +190,7 @@ def test_fair_comparison_configs_share_the_exact_controlled_recipe(dataset: str)
         "ratio": [0.3, 3.3],
         "value": "random",
     }
-    assert expected["train"]["epochs"] == CANONICAL_EPOCHS == 300
+    assert expected["train"]["epochs"] == CANONICAL_EPOCHS == 200
     assert expected["train"]["warmup_epochs"] == 5
     assert expected["train"]["mixup_alpha"] == 0.8
     assert expected["train"]["cutmix_alpha"] == 1.0
@@ -331,11 +331,11 @@ def test_runner_marks_short_runs_noncanonical_and_rejects_overwrites(tmp_path: P
     assert run_suffix(canonical_args) == ""
     short_args = SimpleNamespace(data_root="data", smoke=False, epochs=30)
     assert run_suffix(short_args) == "_e30"
-    old_200_args = SimpleNamespace(data_root="data", smoke=False, epochs=200)
-    old_200_overrides = _overrides(old_200_args, "old_200_run", 17)
-    assert run_suffix(old_200_args) == "_e200"
-    assert f"protocol.name={CANONICAL_PROTOCOL_NAME}_epochs200" in old_200_overrides
-    assert "protocol.canonical=false" in old_200_overrides
+    noncanonical_300_args = SimpleNamespace(data_root="data", smoke=False, epochs=300)
+    noncanonical_300_overrides = _overrides(noncanonical_300_args, "noncanonical_300_run", 17)
+    assert run_suffix(noncanonical_300_args) == "_e300"
+    assert f"protocol.name={CANONICAL_PROTOCOL_NAME}_epochs300" in noncanonical_300_overrides
+    assert "protocol.canonical=false" in noncanonical_300_overrides
     validate_seeds([17])
     with pytest.raises(ValueError, match="Duplicate seeds"):
         validate_seeds([17, 17])
@@ -357,8 +357,8 @@ def test_runner_defaults_to_the_old_hbcc_6_run_matrix(monkeypatch: pytest.Monkey
     assert tuple(args.models) == CORE_MODELS
     assert tuple(args.seeds) == DEFAULT_SEEDS == (17,)
     assert len(args.models) * len(args.seeds) == 6
-    assert args.output == "runs_fair_paper_inspired_300e"
-    assert args.benchmark_output == "results/fair_paper_inspired_300e"
+    assert args.output == "runs_fair_paper_inspired_200e"
+    assert args.benchmark_output == "results/fair_paper_inspired_200e"
     assert args.skip_completed is True
 
 
@@ -373,7 +373,7 @@ def test_single_seed_notebook_does_not_report_fake_uncertainty() -> None:
     assert "single_seed_differences" in code
     assert "std_acc1" not in code
     assert "ci95_" not in code
-    assert "runs_fair_paper_inspired_300e" in code
+    assert "runs_fair_paper_inspired_200e" in code
 
 
 def test_completed_run_reuse_requires_matching_metadata_and_artifacts(tmp_path: Path) -> None:

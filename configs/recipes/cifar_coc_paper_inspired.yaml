@@ -1,13 +1,13 @@
 protocol:
-  name: cifar_coc_paper_inspired_300e_v1
+  name: cifar_coc_paper_inspired_200e_v1
   purpose: resource_efficient_architecture_comparison_with_one_shared_recipe
   canonical: true
-  effective_epochs: 300
+  effective_epochs: 200
   deterministic_scope: augmentation_and_order_exact_model_kernels_best_effort_on_cuda
   reference:
     paper: Context Cluster, ICLR 2023
     section: 4.1 Image Classification on ImageNet-1K
-    adaptation: CIFAR RandomCrop, 300 epochs, no EMA, batch size 128
+    adaptation: CIFAR RandomCrop, 200 epochs, no EMA, batch size 128
 
 data:
   name: cifar10
@@ -37,7 +37,7 @@ data:
 train:
   seed: 17
   deterministic: true
-  epochs: 300
+  epochs: 200
   warmup_epochs: 5
   lr: 0.001
   weight_decay: 0.05

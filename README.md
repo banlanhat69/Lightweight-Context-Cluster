@@ -120,7 +120,7 @@ Quick CIFAR-100 smoke check:
 The primary architecture table uses one shared paper-inspired recipe under
 `configs/fair_comparison`. It compares the original HBCC-Small/Medium approach
 against the four baselines already used in the report (ResNet-18, MobileNetV2,
-ShuffleNetV2 and CoC) using one shared seed (`17`): 6 training runs of 300 epochs.
+ShuffleNetV2 and CoC) using one shared seed (`17`): 6 training runs of 200 epochs.
 P-HBCC-2M is retained only as an optional experimental artifact and is not part
 of the default matrix. The
 recipe follows the augmentation list in Context Cluster section 4.1 with a
@@ -137,7 +137,7 @@ Use `--dataset cifar100` for the corresponding CIFAR-100 matrix. The training
 seed controls model initialization, DataLoader workers/order and independent
 MixUp/CutMix RNG streams; `data.split_seed` remains fixed at 42. The recipe is
 paper-inspired rather than an exact ImageNet reproduction: it uses CIFAR,
-300 epochs, batch size 128 and no EMA. With one seed, results are descriptive
+200 epochs, batch size 128 and no EMA. With one seed, results are descriptive
 and do not support standard-deviation or confidence-interval claims. See
 `configs/fair_comparison/README.md` for the fairness contract.
 
