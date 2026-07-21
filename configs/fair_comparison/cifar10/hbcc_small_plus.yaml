@@ -1,7 +1,0 @@
-_base_: hbcc_small.yaml
-
-experiment:
-  name: fair_cifar10_hbcc_small_plus
-
-model:
-  depths: [2, 2, 4, 1]

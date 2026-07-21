@@ -1,9 +1,0 @@
-_base_:
-  - ../../hbcc_accuracy_small.yaml
-  - ../../recipes/cifar_coc_paper_inspired.yaml
-
-experiment:
-  name: fair_cifar10_hbcc_small
-
-model:
-  drop_path_rate: 0.10

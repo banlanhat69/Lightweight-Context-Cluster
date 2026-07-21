@@ -1,6 +1,0 @@
-_base_:
-  - ../../baselines/resnet18_cifar.yaml
-  - ../../recipes/cifar_coc_paper_inspired.yaml
-
-experiment:
-  name: fair_cifar10_resnet18
