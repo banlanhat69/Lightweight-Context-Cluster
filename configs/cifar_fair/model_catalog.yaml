@@ -1,0 +1,78 @@
+models:
+  resnet18:
+    display_name: ResNet-18
+    model:
+      name: resnet18_cifar
+
+  mobilenet_v2:
+    display_name: MobileNetV2
+    model:
+      name: mobilenet_v2_cifar
+
+  shufflenet_v2_x1_0:
+    display_name: ShuffleNetV2-x1.0
+    model:
+      name: shufflenet_v2_x1_0_cifar
+
+  coc_baseline:
+    display_name: Context Cluster baseline
+    model:
+      name: hbcc
+      use_coord: true
+      embed_dims: [32, 64, 196, 320]
+      depths: [2, 2, 3, 1]
+      mlp_ratios: [4.0, 4.0, 3.0, 3.0]
+      heads: [2, 4, 4, 4]
+      head_dim: [16, 16, 24, 24]
+      proposals: [[2, 2], [2, 2], [2, 2], [2, 2]]
+      folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
+      similarities: [cosine, cosine, cosine, cosine]
+      stage_modes: [cluster, cluster, cluster, cluster]
+      local_branches: [identity, identity, identity, identity]
+      local_ratios: [0.0, 0.0, 0.0, 0.0]
+      channel_shuffle: [false, false, false, false]
+      norm: gn
+      stem_stride: 2
+      drop_path_rate: 0.05
+
+  hbcc_small:
+    display_name: HBCC-Small
+    model:
+      name: hbcc
+      use_coord: true
+      embed_dims: [48, 80, 160, 224]
+      depths: [2, 2, 3, 1]
+      mlp_ratios: 3.0
+      heads: [2, 2, 4, 4]
+      head_dim: [16, 16, 16, 16]
+      proposals: [[2, 2], [2, 2], [2, 2], [2, 2]]
+      folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
+      similarities: [cosine, cosine, cosine, cosine]
+      stage_modes: [hybrid, hybrid, cluster, cluster]
+      local_branches: [lbpconv, dwconv, identity, identity]
+      local_ratios: [0.5, 0.5, 0.0, 0.0]
+      channel_shuffle: [true, true, false, false]
+      norm: bn
+      stem_stride: 2
+      drop_path_rate: 0.10
+
+  hbcc_medium:
+    display_name: HBCC-Medium
+    model:
+      name: hbcc
+      use_coord: true
+      embed_dims: [64, 96, 192, 256]
+      depths: [2, 2, 4, 2]
+      mlp_ratios: 3.0
+      heads: [2, 3, 4, 4]
+      head_dim: [16, 16, 16, 16]
+      proposals: [[2, 2], [2, 2], [2, 2], [2, 2]]
+      folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
+      similarities: [cosine, cosine, cosine, cosine]
+      stage_modes: [hybrid, hybrid, cluster, cluster]
+      local_branches: [lbpconv, dwconv, identity, identity]
+      local_ratios: [0.5, 0.5, 0.0, 0.0]
+      channel_shuffle: [true, true, false, false]
+      norm: bn
+      stem_stride: 2
+      drop_path_rate: 0.10
