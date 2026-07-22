@@ -1,0 +1,53 @@
+protocol:
+  name: cifar100_hbcc_legacy_300e_v1
+  purpose: resource_efficient_architecture_comparison_with_one_shared_recipe
+  dataset: cifar100
+  augmentation_profile: hbcc_legacy
+  canonical: true
+  effective_epochs: 300
+  deterministic_scope: augmentation_and_order_exact_model_kernels_best_effort_on_cuda
+
+data:
+  name: cifar100
+  root: data
+  download: true
+  batch_size: 128
+  val_batch_size: 256
+  test_batch_size: 256
+  val_size: 5000
+  split_seed: 42
+  workers: 2
+  pin_memory: true
+  drop_last: true
+  augment: true
+  randaugment:
+    enabled: true
+    num_ops: 2
+    magnitude: 9
+  random_erasing:
+    p: 0.25
+    scale: [0.02, 0.20]
+    ratio: [0.3, 3.3]
+    value: 0.0
+
+train:
+  seed: 17
+  deterministic: true
+  epochs: 300
+  warmup_epochs: 5
+  lr: 0.001
+  weight_decay: 0.05
+  label_smoothing: 0.10
+  mixup_alpha: 0.20
+  cutmix_alpha: 1.0
+  cutmix_prob: 0.50
+  amp: true
+  kd_alpha: 0.0
+  kd_temperature: 4.0
+  skip_test: false
+
+model_overrides:
+  hbcc_small:
+    drop_path_rate: 0.08
+  hbcc_medium:
+    drop_path_rate: 0.12
