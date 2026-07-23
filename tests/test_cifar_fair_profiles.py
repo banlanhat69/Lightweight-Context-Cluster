@@ -45,6 +45,8 @@ def test_hbcc_legacy_profile_matches_the_reported_recipe(dataset: str) -> None:
         "hbcc_medium": {"drop_path_rate": 0.12},
         "hbcc_medium_keep4": {"drop_path_rate": 0.12},
         "hbcc_medium_keep4_late_hybrid": {"drop_path_rate": 0.12},
+        "hbcc_medium_stable": {"drop_path_rate": 0.12},
+        "hbcc_medium_v2": {"drop_path_rate": 0.12},
     }
 
     signature = repr(data._transforms(dataset, True, True, cfg["data"]))

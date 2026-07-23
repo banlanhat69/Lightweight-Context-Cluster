@@ -142,3 +142,53 @@ models:
       stem_stride: 2
       down_stride: [2, 2, 1]
       drop_path_rate: 0.10
+
+  hbcc_medium_stable:
+    display_name: HBCC-Medium Stable Cluster
+    model:
+      name: hbcc
+      use_coord: true
+      embed_dims: [64, 96, 192, 256]
+      depths: [2, 2, 4, 2]
+      mlp_ratios: 3.0
+      heads: [2, 3, 4, 4]
+      head_dim: [16, 16, 16, 16]
+      proposals: [[2, 2], [2, 2], [2, 2], [1, 1]]
+      folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
+      similarities: [cosine, cosine, cosine, cosine]
+      assignment_modes: [hard_st, hard_st, hard_st, hard_st]
+      assignment_temperatures: [1.0, 1.0, 1.0, 1.0]
+      positive_similarity_scales: [true, true, true, true]
+      stage_modes: [hybrid, hybrid, cluster, cluster]
+      local_branches: [lbpconv, dwconv, identity, identity]
+      local_ratios: [0.5, 0.5, 0.0, 0.0]
+      channel_shuffle: [true, true, false, false]
+      layer_scale_init_values: [0.001, 0.001, 0.001, 0.001]
+      norm: bn
+      stem_stride: 2
+      drop_path_rate: 0.10
+
+  hbcc_medium_v2:
+    display_name: HBCC-Medium v2
+    model:
+      name: hbcc
+      use_coord: true
+      embed_dims: [64, 96, 192, 256]
+      depths: [2, 2, 4, 2]
+      mlp_ratios: 3.0
+      heads: [2, 3, 4, 4]
+      head_dim: [16, 16, 20, 24]
+      proposals: [[2, 2], [2, 2], [2, 2], [1, 1]]
+      folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
+      similarities: [cosine, cosine, cosine, cosine]
+      assignment_modes: [hard_st, hard_st, hard_st, hard_st]
+      assignment_temperatures: [1.0, 1.0, 1.0, 1.0]
+      positive_similarity_scales: [true, true, true, true]
+      stage_modes: [hybrid, hybrid, cluster, cluster]
+      local_branches: [lbpconv, dwconv, identity, identity]
+      local_ratios: [0.5, 0.5, 0.0, 0.0]
+      channel_shuffle: [true, true, false, false]
+      layer_scale_init_values: [0.001, 0.001, 0.001, 0.001]
+      norm: bn
+      stem_stride: 2
+      drop_path_rate: 0.10

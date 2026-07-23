@@ -160,6 +160,27 @@ The original `hbcc_small` and `hbcc_medium` entries remain unchanged. Enable
 one candidate at a time in `MODEL_SWITCHES` and compare it with its original
 counterpart under the same dataset, profile, seed, and epoch count.
 
+### HBCC cluster-operator redesign
+
+The Keep-4x4 result isolates spatial resolution, but it does not address three
+operator-level limitations: gradients only reach the selected cluster,
+unconstrained similarity scale can become negative and reverse nearest-center
+assignment, and the late cluster projections compress 192/256 channels to 64.
+
+Two additional opt-in candidates keep the efficient
+`32 -> 16 -> 8 -> 4 -> 2` schedule:
+
+- `hbcc_medium_stable` keeps the same 2.864M parameters as HBCC-Medium. It uses
+  hard assignments with soft straight-through gradients, a strictly positive
+  similarity scale, `1e-3` LayerScale initialization, and one global proposal
+  in the final 2x2 stage.
+- `hbcc_medium_v2` adds only wider late cluster embeddings
+  (`head_dim=[16, 16, 20, 24]`) and remains below 3M parameters.
+
+Run `hbcc_medium_stable` first against `hbcc_medium`. Run `hbcc_medium_v2`
+only after that comparison so the value of the extra late-stage capacity stays
+measurable.
+
 ## Benchmark Matrix
 
 ```powershell

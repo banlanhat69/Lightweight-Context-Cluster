@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import math
+
 import torch
 from einops import rearrange
 from torch import nn
+from torch.nn import functional as F
 
 from .layers import (
     ChannelGate,
@@ -48,6 +51,9 @@ class ContextClusterOp(nn.Module):
         similarity: str = "cosine",
         hamming_scale: bool = False,
         store_assignments: bool = False,
+        assignment_mode: str = "hard",
+        assignment_temperature: float = 1.0,
+        positive_similarity_scale: bool = False,
     ) -> None:
         super().__init__()
         out_dim = out_dim or dim
@@ -59,10 +65,23 @@ class ContextClusterOp(nn.Module):
         self.fold = fold
         self.similarity = similarity.lower()
         self.store_assignments = store_assignments
+        self.assignment_mode = assignment_mode.lower()
+        if self.assignment_mode not in {"hard", "hard_st", "soft"}:
+            raise ValueError(
+                f"Unsupported assignment mode '{assignment_mode}'. "
+                "Expected one of: hard, hard_st, soft."
+            )
+        self.assignment_temperature = float(assignment_temperature)
+        if self.assignment_temperature <= 0.0:
+            raise ValueError(
+                f"assignment_temperature must be positive, got {assignment_temperature}"
+            )
+        self.positive_similarity_scale = bool(positive_similarity_scale)
         self.f = nn.Conv2d(dim, heads * head_dim, 1)
         self.v = nn.Conv2d(dim, heads * head_dim, 1)
         self.proj = nn.Conv2d(heads * head_dim, out_dim, 1)
-        self.sim_alpha = nn.Parameter(torch.ones(1))
+        alpha_init = math.log(math.expm1(1.0)) if self.positive_similarity_scale else 1.0
+        self.sim_alpha = nn.Parameter(torch.full((1,), alpha_init))
         self.sim_beta = nn.Parameter(torch.zeros(1))
         self.binary_scale = nn.Parameter(torch.ones(1)) if hamming_scale else None
         self.centers_proposal = nn.AdaptiveAvgPool2d(proposal)
@@ -74,6 +93,26 @@ class ContextClusterOp(nn.Module):
         if self.similarity in {"hamming", "hamming_sim", "hamming_simulated"}:
             return pairwise_hamming_simulated(centers, points, self.binary_scale)
         raise ValueError(f"Unsupported similarity: {self.similarity}")
+
+    def effective_sim_alpha(self) -> torch.Tensor:
+        if self.positive_similarity_scale:
+            return F.softplus(self.sim_alpha) + 1e-6
+        return self.sim_alpha
+
+    def _assign(self, logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        max_idx = logits.max(dim=1, keepdim=True).indices
+        hard = torch.zeros_like(logits)
+        hard.scatter_(1, max_idx, 1.0)
+        if self.assignment_mode == "hard":
+            return hard, max_idx
+
+        soft = torch.softmax(logits / self.assignment_temperature, dim=1)
+        if self.assignment_mode == "soft":
+            return soft, max_idx
+        if not self.training:
+            return hard, max_idx
+        # Hard values in the forward pass, soft gradients in the backward pass.
+        return hard + soft - soft.detach(), max_idx
 
     def _partition(self, x: torch.Tensor) -> tuple[torch.Tensor, tuple[int, int, int, int] | None]:
         fold_h, fold_w = self.fold
@@ -110,13 +149,12 @@ class ContextClusterOp(nn.Module):
         value_centers_flat = value_centers.flatten(2).transpose(1, 2)
 
         raw_sim = self._similarity(centers_flat, points_flat)
-        sim = torch.sigmoid(self.sim_beta + self.sim_alpha * raw_sim)
-        sim_max_idx = sim.max(dim=1, keepdim=True).indices
+        logits = self.sim_beta + self.effective_sim_alpha() * raw_sim
+        confidence = torch.sigmoid(logits)
+        assignment, sim_max_idx = self._assign(logits)
         if self.store_assignments:
             self.last_assignment = sim_max_idx.detach()
-        mask = torch.zeros_like(sim)
-        mask.scatter_(1, sim_max_idx, 1.0)
-        sim = sim * mask
+        sim = confidence * assignment
 
         aggregated = (
             (value_flat.unsqueeze(1) * sim.unsqueeze(-1)).sum(dim=2) + value_centers_flat
@@ -159,6 +197,9 @@ class HybridClusterBlock(nn.Module):
         layer_scale: float = 1e-5,
         hamming_scale: bool = False,
         mode: str = "cluster",
+        assignment_mode: str = "hard",
+        assignment_temperature: float = 1.0,
+        positive_similarity_scale: bool = False,
     ) -> None:
         super().__init__()
         self.mode = mode
@@ -187,6 +228,9 @@ class HybridClusterBlock(nn.Module):
                 head_dim=head_dim,
                 similarity=similarity,
                 hamming_scale=hamming_scale,
+                assignment_mode=assignment_mode,
+                assignment_temperature=assignment_temperature,
+                positive_similarity_scale=positive_similarity_scale,
             )
             if self.cluster_dim > 0
             else nn.Identity()
@@ -237,6 +281,10 @@ class Stage(nn.Module):
         drop: float,
         drop_path_rates: list[float],
         pruning_mask: bool = False,
+        layer_scale_init_value: float = 1e-5,
+        assignment_mode: str = "hard",
+        assignment_temperature: float = 1.0,
+        positive_similarity_scale: bool = False,
     ) -> None:
         super().__init__()
         self.blocks = nn.Sequential(
@@ -255,7 +303,11 @@ class Stage(nn.Module):
                     norm=norm,
                     drop=drop,
                     drop_path=drop_path_rates[i],
+                    layer_scale=layer_scale_init_value,
                     mode=mode,
+                    assignment_mode=assignment_mode,
+                    assignment_temperature=assignment_temperature,
+                    positive_similarity_scale=positive_similarity_scale,
                 )
                 for i in range(depth)
             ]

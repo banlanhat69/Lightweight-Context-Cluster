@@ -41,10 +41,14 @@ class HBCCNet(nn.Module):
         proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (2, 2)),
         folds: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((4, 4), (2, 2), (1, 1), (1, 1)),
         similarities: str | list[str] = "cosine",
+        assignment_modes: str | list[str] = "hard",
+        assignment_temperatures: float | list[float] = 1.0,
+        positive_similarity_scales: bool | list[bool] = False,
         local_branches: str | list[str] = "dwconv",
         local_ratios: float | list[float] = 0.0,
         stage_modes: str | list[str] = ("local", "hybrid", "cluster", "cluster"),
         channel_shuffle: bool | list[bool] = False,
+        layer_scale_init_values: float | list[float] = 1e-5,
         norm: str = "bn",
         stem_patch_size: int = 3,
         stem_stride: int = 2,
@@ -70,10 +74,14 @@ class HBCCNet(nn.Module):
         mlp_ratios = _as_list(mlp_ratios, 4)
         head_dim = _as_list(head_dim, 4)
         similarities = _as_list(similarities, 4)
+        assignment_modes = _as_list(assignment_modes, 4)
+        assignment_temperatures = _as_list(assignment_temperatures, 4)
+        positive_similarity_scales = _as_list(positive_similarity_scales, 4)
         local_branches = _as_list(local_branches, 4)
         local_ratios = _as_list(local_ratios, 4)
         stage_modes = _as_list(stage_modes, 4)
         channel_shuffle = _as_list(channel_shuffle, 4)
+        layer_scale_init_values = _as_list(layer_scale_init_values, 4)
         proposals = [_tuple2(v) for v in proposals]
         folds = [_tuple2(v) for v in folds]
         down_patch_sizes = [int(v) for v in _as_list(down_patch_size, 3)]
@@ -113,6 +121,10 @@ class HBCCNet(nn.Module):
                     drop=drop_rate,
                     drop_path_rates=rates,
                     pruning_mask=pruning_mask,
+                    layer_scale_init_value=float(layer_scale_init_values[idx]),
+                    assignment_mode=str(assignment_modes[idx]),
+                    assignment_temperature=float(assignment_temperatures[idx]),
+                    positive_similarity_scale=bool(positive_similarity_scales[idx]),
                 )
             )
             if idx < 3:
