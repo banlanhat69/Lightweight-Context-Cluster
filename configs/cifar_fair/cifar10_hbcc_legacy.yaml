@@ -49,5 +49,11 @@ train:
 model_overrides:
   hbcc_small:
     drop_path_rate: 0.08
+  hbcc_small_keep4:
+    drop_path_rate: 0.08
   hbcc_medium:
+    drop_path_rate: 0.12
+  hbcc_medium_keep4:
+    drop_path_rate: 0.12
+  hbcc_medium_keep4_late_hybrid:
     drop_path_rate: 0.12

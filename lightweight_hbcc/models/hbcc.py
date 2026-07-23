@@ -10,10 +10,10 @@ from .layers import CoordinateAugment, PointReducer, make_norm
 
 
 def _as_list(value: Any, length: int) -> list[Any]:
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         if len(value) != length:
             raise ValueError(f"Expected list of length {length}, got {len(value)}")
-        return value
+        return list(value)
     return [value for _ in range(length)]
 
 
@@ -49,9 +49,9 @@ class HBCCNet(nn.Module):
         stem_patch_size: int = 3,
         stem_stride: int = 2,
         stem_padding: int = 1,
-        down_patch_size: int = 3,
-        down_stride: int = 2,
-        down_padding: int = 1,
+        down_patch_size: int | list[int] | tuple[int, int, int] = 3,
+        down_stride: int | list[int] | tuple[int, int, int] = 2,
+        down_padding: int | list[int] | tuple[int, int, int] = 1,
         drop_rate: float = 0.0,
         drop_path_rate: float = 0.0,
         pruning_mask: bool = False,
@@ -76,6 +76,16 @@ class HBCCNet(nn.Module):
         channel_shuffle = _as_list(channel_shuffle, 4)
         proposals = [_tuple2(v) for v in proposals]
         folds = [_tuple2(v) for v in folds]
+        down_patch_sizes = [int(v) for v in _as_list(down_patch_size, 3)]
+        down_strides = [int(v) for v in _as_list(down_stride, 3)]
+        down_paddings = [int(v) for v in _as_list(down_padding, 3)]
+        if any(value <= 0 for value in down_patch_sizes):
+            raise ValueError(f"down_patch_size values must be positive, got {down_patch_sizes}")
+        if any(value <= 0 for value in down_strides):
+            raise ValueError(f"down_stride values must be positive, got {down_strides}")
+        if any(value < 0 for value in down_paddings):
+            raise ValueError(f"down_padding values must be non-negative, got {down_paddings}")
+        self.down_strides = down_strides
 
         total_depth = sum(depths)
         dpr = torch.linspace(0, drop_path_rate, total_depth).tolist() if total_depth > 0 else []
@@ -110,9 +120,9 @@ class HBCCNet(nn.Module):
                     PointReducer(
                         embed_dims[idx],
                         embed_dims[idx + 1],
-                        down_patch_size,
-                        down_stride,
-                        down_padding,
+                        down_patch_sizes[idx],
+                        down_strides[idx],
+                        down_paddings[idx],
                         norm=norm,
                     )
                 )

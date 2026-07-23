@@ -144,6 +144,22 @@ and do not support standard-deviation or confidence-interval claims. See
 An executable notebook with safe smoke defaults, shared-seed controls and
 result aggregation is available at `notebooks/hbcc_fair_training.ipynb`.
 
+### CIFAR 4x4 spatial ablations
+
+The current Kaggle workflow in `notebooks/cifar_fair_training.ipynb` exposes
+three opt-in HBCC candidates from `configs/cifar_fair/model_catalog.yaml`:
+
+- `hbcc_small_keep4`: changes only the reducer strides from `[2, 2, 2]` to
+  `[2, 2, 1]`, producing `32 -> 16 -> 8 -> 4 -> 4`.
+- `hbcc_medium_keep4`: applies the same single-variable spatial ablation to
+  HBCC-Medium.
+- `hbcc_medium_keep4_late_hybrid`: builds on `hbcc_medium_keep4` and changes
+  only the last stage to a 50/50 cluster + depthwise-convolution hybrid.
+
+The original `hbcc_small` and `hbcc_medium` entries remain unchanged. Enable
+one candidate at a time in `MODEL_SWITCHES` and compare it with its original
+counterpart under the same dataset, profile, seed, and epoch count.
+
 ## Benchmark Matrix
 
 ```powershell
