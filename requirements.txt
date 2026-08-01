@@ -1,15 +1,7 @@
 einops
-fvcore
-matplotlib
 numpy
 pandas
-pypdf
 pyyaml
-rich
-tabulate
-tensorboard
-thop
-timm==0.6.13
 torch
 torchvision
 tqdm

@@ -1,8 +1,7 @@
 # Research Plan: Lightweight HBCC cho Context Cluster
 
-## 1. Mục tiêu và bối cảnh
-
-Tài liệu này định hướng nghiên cứu và triển khai cho bài toán tối ưu kiến trúc Context Cluster theo hướng **lightweight nhưng vẫn hiệu quả thực tế**. Mục tiêu không chỉ là giảm số lượng tham số, mà là tìm được một hoặc nhiều cấu hình nằm trên Pareto frontier giữa:
+## 1. Mục tiêu 
+Mục tiêu không chỉ là giảm số lượng tham số, mà là tìm được một hoặc nhiều cấu hình nằm trên Pareto frontier giữa:
 
 - `Accuracy`: độ chính xác phân loại, ưu tiên `Top-1`.
 - `Params`: số lượng tham số huấn luyện được và tổng tham số.

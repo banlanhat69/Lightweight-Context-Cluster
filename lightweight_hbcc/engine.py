@@ -13,7 +13,7 @@ from torch import nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
-from .losses import DistillationLoss, smooth_one_hot
+from .losses import DistillationLoss
 from .metrics import AverageMeter, accuracy
 
 
@@ -59,57 +59,6 @@ def load_checkpoint(model: nn.Module, path: str | Path, device: torch.device, st
     return ckpt
 
 
-def _rand_bbox(
-    height: int,
-    width: int,
-    lam: float,
-    rng: random.Random | None = None,
-) -> tuple[int, int, int, int]:
-    rng = rng or random
-    cut_ratio = (1.0 - lam) ** 0.5
-    cut_h = int(height * cut_ratio)
-    cut_w = int(width * cut_ratio)
-    cy = rng.randint(0, height - 1)
-    cx = rng.randint(0, width - 1)
-    y1 = max(cy - cut_h // 2, 0)
-    y2 = min(cy + cut_h // 2, height)
-    x1 = max(cx - cut_w // 2, 0)
-    x2 = min(cx + cut_w // 2, width)
-    return y1, y2, x1, x2
-
-
-def apply_mixup_cutmix(
-    images: torch.Tensor,
-    target: torch.Tensor,
-    num_classes: int,
-    label_smoothing: float,
-    mixup_alpha: float = 0.0,
-    cutmix_alpha: float = 0.0,
-    cutmix_prob: float = 0.0,
-    rng: random.Random | None = None,
-    torch_generator: torch.Generator | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    rng = rng or random
-    use_mixup = mixup_alpha > 0.0
-    use_cutmix = cutmix_alpha > 0.0 and rng.random() < cutmix_prob
-    if not use_mixup and not use_cutmix:
-        return images, target
-    index = torch.randperm(images.size(0), device=images.device, generator=torch_generator)
-    target_a = smooth_one_hot(target, num_classes, label_smoothing)
-    target_b = target_a[index]
-    if use_cutmix:
-        lam = rng.betavariate(cutmix_alpha, cutmix_alpha)
-        y1, y2, x1, x2 = _rand_bbox(images.shape[-2], images.shape[-1], lam, rng=rng)
-        images = images.clone()
-        images[:, :, y1:y2, x1:x2] = images[index, :, y1:y2, x1:x2]
-        lam = 1.0 - ((y2 - y1) * (x2 - x1) / float(images.shape[-2] * images.shape[-1]))
-    else:
-        lam = rng.betavariate(mixup_alpha, mixup_alpha)
-        images = images * lam + images[index] * (1.0 - lam)
-    mixed_target = target_a * lam + target_b * (1.0 - lam)
-    return images, mixed_target
-
-
 def train_one_epoch(
     model: nn.Module,
     loader: torch.utils.data.DataLoader,
@@ -121,14 +70,7 @@ def train_one_epoch(
     amp: bool = True,
     scaler: GradScaler | None = None,
     limit_batches: int | None = None,
-    pruning_regularization: tuple[float, float] | None = None,
     progress: bool = True,
-    mixup_alpha: float = 0.0,
-    cutmix_alpha: float = 0.0,
-    cutmix_prob: float = 0.0,
-    num_classes: int | None = None,
-    mix_rng: random.Random | None = None,
-    mix_torch_generator: torch.Generator | None = None,
 ) -> dict[str, float]:
     model.train()
     if teacher is not None:
@@ -153,31 +95,16 @@ def train_one_epoch(
             break
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
-        hard_target = target
-        if num_classes is not None:
-            images, target = apply_mixup_cutmix(
-                images,
-                target,
-                num_classes=num_classes,
-                label_smoothing=criterion.label_smoothing,
-                mixup_alpha=mixup_alpha,
-                cutmix_alpha=cutmix_alpha,
-                cutmix_prob=cutmix_prob,
-                rng=mix_rng,
-                torch_generator=mix_torch_generator,
-            )
         optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():
             teacher_logits = teacher(images) if teacher is not None else None
         with autocast(device_type=device.type, enabled=amp and device.type == "cuda"):
             output = model(images)
             loss = criterion(output, target, teacher_logits)
-            if pruning_regularization and hasattr(model, "pruning_regularization"):
-                loss = loss + model.pruning_regularization(*pruning_regularization)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
-        acc1 = accuracy(output.detach(), hard_target, (1,))[0].item()
+        acc1 = accuracy(output.detach(), target, (1,))[0].item()
         loss_meter.update(loss.item(), images.size(0))
         acc_meter.update(acc1, images.size(0))
         if progress:

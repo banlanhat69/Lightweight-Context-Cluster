@@ -22,10 +22,3 @@ def shufflenet_v2_x1_0_cifar(num_classes: int = 10, **_: object) -> nn.Module:
     model.conv1[0].stride = (1, 1)
     model.maxpool = nn.Identity()
     return model
-
-
-def resnet18_stl10(num_classes: int = 10, **_: object) -> nn.Module:
-    model = models.resnet18(weights=None, num_classes=num_classes)
-    model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-    model.maxpool = nn.Identity()
-    return model

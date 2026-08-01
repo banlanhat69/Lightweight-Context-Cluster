@@ -5,21 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lightweight-hbcc"
 version = "0.1.0"
-description = "Lightweight HBCC/Context-Cluster research pipeline for CIFAR experiments."
+description = "Two-session no-augmentation HBCC/Context-Cluster CIFAR pipeline."
 requires-python = ">=3.10"
 dependencies = [
     "einops",
-    "fvcore",
-    "matplotlib",
     "numpy",
     "pandas",
-    "pypdf",
     "pyyaml",
-    "rich",
-    "tabulate",
-    "tensorboard",
-    "thop",
-    "timm",
     "torch",
     "torchvision",
     "tqdm",
@@ -28,7 +20,3 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["lightweight_hbcc*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]

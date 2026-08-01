@@ -58,7 +58,6 @@ class HBCCNet(nn.Module):
         down_padding: int | list[int] | tuple[int, int, int] = 1,
         drop_rate: float = 0.0,
         drop_path_rate: float = 0.0,
-        pruning_mask: bool = False,
     ) -> None:
         super().__init__()
         if len(embed_dims) != 4 or len(depths) != 4:
@@ -120,7 +119,6 @@ class HBCCNet(nn.Module):
                     norm=norm,
                     drop=drop_rate,
                     drop_path_rates=rates,
-                    pruning_mask=pruning_mask,
                     layer_scale_init_value=float(layer_scale_init_values[idx]),
                     assignment_mode=str(assignment_modes[idx]),
                     assignment_temperature=float(assignment_temperatures[idx]),
@@ -153,15 +151,6 @@ class HBCCNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_features(x)
         return self.head(x.mean(dim=(-2, -1)))
-
-    def pruning_regularization(self, sparsity_weight: float, crispness_weight: float) -> torch.Tensor:
-        loss = torch.zeros((), device=next(self.parameters()).device)
-        for stage in self.stages:
-            gate = getattr(stage, "gate", None)
-            if hasattr(gate, "regularization"):
-                loss = loss + gate.regularization(sparsity_weight, crispness_weight)
-        return loss
-
 
 def hbcc_latency_tiny(num_classes: int = 10, **kwargs) -> HBCCNet:
     return HBCCNet(

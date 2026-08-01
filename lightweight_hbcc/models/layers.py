@@ -164,26 +164,6 @@ def channel_shuffle(x: torch.Tensor, groups: int = 2) -> torch.Tensor:
     return x.reshape(b, c, h, w)
 
 
-class ChannelGate(nn.Module):
-    """Differentiable structured channel mask used for pruning ablations."""
-
-    def __init__(self, channels: int, init_value: float = 4.0) -> None:
-        super().__init__()
-        self.logits = nn.Parameter(torch.full((channels,), float(init_value)))
-
-    def mask(self) -> torch.Tensor:
-        return torch.sigmoid(self.logits)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * self.mask().view(1, -1, 1, 1)
-
-    def regularization(self, sparsity_weight: float, crispness_weight: float) -> torch.Tensor:
-        mask = self.mask()
-        sparsity = mask.mean()
-        crispness = (mask * (1.0 - mask)).mean()
-        return sparsity_weight * sparsity + crispness_weight * crispness
-
-
 def make_lbp_filters(channels: int, dtype: torch.dtype = torch.float32) -> torch.Tensor:
     filters = torch.zeros(8, 1, 3, 3, dtype=dtype)
     neighbors = [

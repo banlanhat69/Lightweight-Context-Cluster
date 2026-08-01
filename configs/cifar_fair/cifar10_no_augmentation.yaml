@@ -1,0 +1,37 @@
+protocol:
+  name: cifar10_two_session_noaug_v1
+  purpose: architecture_comparison_two_sessions
+  dataset: cifar10
+  session: baseline
+  augmentation: none
+  canonical: true
+  effective_epochs: 300
+  baseline_epochs: 300
+  kd_epochs: 250
+  teacher: resnet18
+
+data:
+  name: cifar10
+  root: data
+  download: true
+  batch_size: 128
+  val_batch_size: 256
+  test_batch_size: 256
+  val_size: 5000
+  split_seed: 42
+  workers: 2
+  pin_memory: true
+  drop_last: true
+
+train:
+  seed: 42
+  deterministic: true
+  epochs: 300
+  warmup_epochs: 5
+  lr: 0.001
+  weight_decay: 0.05
+  label_smoothing: 0.10
+  amp: true
+  kd_alpha: 0.0
+  kd_temperature: 4.0
+  skip_test: false

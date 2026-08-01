@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import random
 import sys
 import time
 from typing import Any
@@ -14,7 +13,11 @@ import torch
 from torch.amp import GradScaler
 
 from lightweight_hbcc.config import apply_overrides, load_config, save_config
-from lightweight_hbcc.data import build_loaders, num_classes_for_dataset
+from lightweight_hbcc.data import (
+    build_loaders,
+    num_classes_for_dataset,
+    validate_no_augmentation_config,
+)
 from lightweight_hbcc.engine import (
     evaluate,
     load_checkpoint,
@@ -26,6 +29,13 @@ from lightweight_hbcc.engine import (
 )
 from lightweight_hbcc.losses import DistillationLoss
 from lightweight_hbcc.models import build_model
+
+
+_REMOVED_BATCH_AUGMENTATION_KEYS = {
+    "mixup_alpha",
+    "cutmix_alpha",
+    "cutmix_prob",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +74,85 @@ def is_controlled_comparison(cfg: dict[str, Any]) -> bool:
     return "architecture_comparison" in purpose or "compare_model_architectures" in purpose
 
 
+def validate_training_mode(
+    cfg: dict[str, Any],
+    teacher_config: str | None,
+    teacher_checkpoint: str | None,
+) -> bool:
+    """Enforce the two supported modes: no-aug CE or no-aug HBCC KD."""
+
+    train_cfg = cfg.setdefault("train", {})
+    legacy_keys = sorted(_REMOVED_BATCH_AUGMENTATION_KEYS.intersection(train_cfg))
+    if legacy_keys:
+        joined = ", ".join(legacy_keys)
+        raise ValueError(
+            "This pipeline intentionally has no batch augmentation. "
+            f"Remove legacy train settings: {joined}"
+        )
+
+    if bool(teacher_config) != bool(teacher_checkpoint):
+        raise ValueError("--teacher-config and --teacher-checkpoint must be provided together.")
+
+    has_teacher = bool(teacher_config and teacher_checkpoint)
+    kd_alpha = float(train_cfg.get("kd_alpha", 0.0))
+    session = str(cfg.get("protocol", {}).get("session", "")).lower()
+    model_name = str(cfg.get("model", {}).get("name", ""))
+    if has_teacher:
+        if model_name != "hbcc":
+            raise ValueError("Knowledge distillation is supported only for HBCC students.")
+        if kd_alpha <= 0.0:
+            raise ValueError("HBCC distillation requires train.kd_alpha > 0.")
+        if session and session != "kd":
+            raise ValueError("A teacher checkpoint is valid only for protocol.session=kd.")
+    else:
+        if kd_alpha != 0.0:
+            raise ValueError("train.kd_alpha must be 0 when no ResNet-18 teacher is provided.")
+        if session == "kd":
+            raise ValueError("protocol.session=kd requires a ResNet-18 teacher checkpoint.")
+    return has_teacher
+
+
+def validate_teacher_artifacts(
+    student_cfg: dict[str, Any],
+    teacher_cfg: dict[str, Any],
+    checkpoint_cfg: dict[str, Any] | None,
+) -> None:
+    """Ensure KD cannot accidentally use an augmented or mismatched teacher."""
+
+    if checkpoint_cfg is None:
+        raise ValueError("The ResNet-18 teacher checkpoint must contain its training config.")
+    validate_no_augmentation_config(teacher_cfg.get("data", {}))
+    validate_no_augmentation_config(checkpoint_cfg.get("data", {}))
+
+    errors: list[str] = []
+    if teacher_cfg.get("model", {}).get("name") != "resnet18_cifar":
+        errors.append("teacher config model must be resnet18_cifar")
+    if teacher_cfg.get("protocol", {}).get("session") != "baseline":
+        errors.append("teacher config must come from the baseline session")
+    if teacher_cfg.get("protocol", {}).get("augmentation") != "none":
+        errors.append("teacher config must declare augmentation=none")
+    if float(teacher_cfg.get("train", {}).get("kd_alpha", -1.0)) != 0.0:
+        errors.append("teacher must be trained with CE (kd_alpha=0)")
+
+    student_dataset = student_cfg.get("protocol", {}).get("dataset")
+    teacher_dataset = teacher_cfg.get("protocol", {}).get("dataset")
+    if student_dataset != teacher_dataset:
+        errors.append(
+            f"teacher dataset {teacher_dataset!r} does not match student dataset {student_dataset!r}"
+        )
+    student_seed = int(student_cfg.get("train", {}).get("seed", -1))
+    teacher_seed = int(teacher_cfg.get("train", {}).get("seed", -2))
+    if student_seed != teacher_seed:
+        errors.append(
+            f"teacher seed {teacher_seed} does not match student seed {student_seed}"
+        )
+    for section in ("protocol", "data", "train", "model"):
+        if checkpoint_cfg.get(section) != teacher_cfg.get(section):
+            errors.append(f"teacher checkpoint {section} metadata does not match teacher config")
+    if errors:
+        raise ValueError("Invalid ResNet-18 teacher:\n- " + "\n- ".join(errors))
+
+
 def main() -> None:
     args = parse_args()
     cfg = apply_overrides(load_config(args.config), args.override)
@@ -71,14 +160,54 @@ def main() -> None:
     cfg.setdefault("model", {})["num_classes"] = cfg["model"].get("num_classes", num_classes_for_dataset(dataset_name))
     seed, loader_seed, deterministic = resolve_seed_config(cfg)
     train_cfg = cfg["train"]
+    has_teacher = validate_training_mode(cfg, args.teacher_config, args.teacher_checkpoint)
+    cfg["distillation"] = {
+        "enabled": has_teacher,
+        "teacher_model": "resnet18_cifar" if has_teacher else None,
+        "teacher_config": str(args.teacher_config) if has_teacher else None,
+        "teacher_checkpoint": str(args.teacher_checkpoint) if has_teacher else None,
+        "alpha": float(train_cfg.get("kd_alpha", 0.0)),
+        "temperature": float(train_cfg.get("kd_temperature", 4.0)),
+        "kl_direction": "student||teacher" if has_teacher else None,
+    }
     seed_everything(seed, deterministic=deterministic)
     if args.resume and is_controlled_comparison(cfg):
         raise ValueError(
             "Controlled-comparison runs do not support --resume because optimizer, scheduler, "
-            "DataLoader and augmentation RNG states are not restored. Start a fresh paired-seed run."
+            "and DataLoader RNG states are not restored. Start a fresh paired-seed run."
         )
     skip_test = args.skip_test or bool(train_cfg.get("skip_test", False))
     device = resolve_device(args.device)
+    teacher = None
+    if has_teacher:
+        assert args.teacher_config is not None
+        assert args.teacher_checkpoint is not None
+        print("setup: validating frozen ResNet-18 teacher...", flush=True)
+        teacher_cfg = load_config(args.teacher_config)
+        teacher_cfg.setdefault("model", {})["num_classes"] = cfg["model"]["num_classes"]
+        teacher = build_model(teacher_cfg).to(device)
+        teacher_checkpoint = load_checkpoint(
+            teacher,
+            args.teacher_checkpoint,
+            device,
+            strict=True,
+        )
+        embedded_config = teacher_checkpoint.get("config")
+        validate_teacher_artifacts(
+            cfg,
+            teacher_cfg,
+            embedded_config if isinstance(embedded_config, dict) else None,
+        )
+        teacher.eval()
+        teacher.requires_grad_(False)
+        print(
+            f"setup: frozen ResNet-18 teacher loaded from {args.teacher_checkpoint}",
+            flush=True,
+        )
+        # Teacher construction consumes RNG state. Restore the run seed so the
+        # HBCC student starts from the same initialization as its CE counterpart.
+        seed_everything(seed, deterministic=deterministic)
+
     output_dir = Path(args.output) / cfg.get("experiment", {}).get("name", Path(args.config).stem)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_config(cfg, output_dir / "config.yaml")
@@ -106,21 +235,11 @@ def main() -> None:
     )
     print("setup: building model...", flush=True)
     model = build_model(cfg).to(device)
-    mix_rng = random.Random(seed + 1_000_003)
-    mix_torch_generator = torch.Generator(device=device).manual_seed(seed + 2_000_003)
     param_count = sum(p.numel() for p in model.parameters())
     print(f"setup: model ready params={param_count} elapsed={time.perf_counter() - setup_start:.1f}s", flush=True)
     if args.resume:
         print(f"setup: loading checkpoint {args.resume}", flush=True)
         load_checkpoint(model, args.resume, device, strict=False)
-
-    teacher = None
-    if args.teacher_config and args.teacher_checkpoint:
-        teacher_cfg = load_config(args.teacher_config)
-        teacher_cfg.setdefault("model", {})["num_classes"] = cfg["model"]["num_classes"]
-        teacher = build_model(teacher_cfg).to(device)
-        load_checkpoint(teacher, args.teacher_checkpoint, device, strict=True)
-        teacher.eval()
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -137,18 +256,11 @@ def main() -> None:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
     criterion = DistillationLoss(
         temperature=float(train_cfg.get("kd_temperature", 4.0)),
-        alpha=float(train_cfg.get("kd_alpha", 0.0 if teacher is None else 0.5)),
+        alpha=float(train_cfg.get("kd_alpha", 0.0)),
         label_smoothing=float(train_cfg.get("label_smoothing", 0.0)),
     )
     amp = bool(train_cfg.get("amp", True))
     scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
-    pruning_reg = None
-    if cfg.get("model", {}).get("pruning_mask"):
-        pruning_reg = (
-            float(train_cfg.get("pruning_sparsity_weight", 0.0)),
-            float(train_cfg.get("pruning_crispness_weight", 0.0)),
-        )
-
     print(f"train: starting epochs={epochs} skip_test={skip_test}", flush=True)
     best_acc = 0.0
     best_epoch = -1
@@ -164,14 +276,7 @@ def main() -> None:
             amp=amp,
             scaler=scaler,
             limit_batches=args.limit_train_batches,
-            pruning_regularization=pruning_reg,
             progress=not args.no_progress,
-            mixup_alpha=float(train_cfg.get("mixup_alpha", 0.0)),
-            cutmix_alpha=float(train_cfg.get("cutmix_alpha", 0.0)),
-            cutmix_prob=float(train_cfg.get("cutmix_prob", 0.0)),
-            num_classes=cfg["model"]["num_classes"],
-            mix_rng=mix_rng,
-            mix_torch_generator=mix_torch_generator,
         )
         val_metrics = evaluate(
             model,

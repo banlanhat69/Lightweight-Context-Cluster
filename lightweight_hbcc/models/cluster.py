@@ -8,7 +8,6 @@ from torch import nn
 from torch.nn import functional as F
 
 from .layers import (
-    ChannelGate,
     DropPath,
     channel_shuffle,
     make_local_branch,
@@ -280,7 +279,6 @@ class Stage(nn.Module):
         norm: str,
         drop: float,
         drop_path_rates: list[float],
-        pruning_mask: bool = False,
         layer_scale_init_value: float = 1e-5,
         assignment_mode: str = "hard",
         assignment_temperature: float = 1.0,
@@ -312,7 +310,5 @@ class Stage(nn.Module):
                 for i in range(depth)
             ]
         )
-        self.gate = ChannelGate(dim) if pruning_mask else nn.Identity()
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.gate(self.blocks(x))
+        return self.blocks(x)
