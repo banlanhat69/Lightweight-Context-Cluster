@@ -249,6 +249,7 @@ def make_effective_config(
             "train": {
                 "seed": seed,
                 "epochs": epochs,
+                "kd_method": "reverse_kd" if session == "kd" else "none",
                 "kd_alpha": KD_ALPHA if session == "kd" else 0.0,
                 "kd_temperature": KD_TEMPERATURE,
             },
@@ -310,6 +311,7 @@ def completed_run_matches(output_root: Path, expected: dict[str, Any]) -> bool:
     distillation = actual.get("distillation", {})
     distillation_matches = (
         bool(distillation.get("enabled")) is is_kd
+        and distillation.get("method") == ("reverse_kd" if is_kd else "none")
         and float(distillation.get("alpha", 0.0))
         == (KD_ALPHA if is_kd else 0.0)
         and float(distillation.get("temperature", KD_TEMPERATURE)) == KD_TEMPERATURE

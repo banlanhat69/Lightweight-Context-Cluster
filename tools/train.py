@@ -98,17 +98,34 @@ def validate_training_mode(
     session = str(cfg.get("protocol", {}).get("session", "")).lower()
     model_name = str(cfg.get("model", {}).get("name", ""))
     if has_teacher:
+        kd_method = str(train_cfg.get("kd_method", "reverse_kd")).lower()
+        if kd_method not in {"standard", "reverse_kd", "dkd"}:
+            raise ValueError(
+                "HBCC distillation method must be 'standard', 'reverse_kd', or 'dkd'."
+            )
         if model_name != "hbcc":
             raise ValueError("Knowledge distillation is supported only for HBCC students.")
-        if kd_alpha <= 0.0:
-            raise ValueError("HBCC distillation requires train.kd_alpha > 0.")
+        if kd_method in {"standard", "reverse_kd"} and kd_alpha <= 0.0:
+            raise ValueError(f"{kd_method} requires train.kd_alpha > 0.")
+        if kd_method == "dkd":
+            tckd_weight = float(train_cfg.get("dkd_tckd_weight", 1.0))
+            nckd_weight = float(train_cfg.get("dkd_nckd_weight", 4.0))
+            if tckd_weight < 0.0 or nckd_weight < 0.0:
+                raise ValueError("DKD weights must be non-negative.")
+            if tckd_weight == 0.0 and nckd_weight == 0.0:
+                raise ValueError("DKD requires at least one positive weight.")
         if session and session != "kd":
             raise ValueError("A teacher checkpoint is valid only for protocol.session=kd.")
     else:
+        kd_method = str(train_cfg.get("kd_method", "none")).lower()
+        if kd_method not in {"none", "ce"}:
+            raise ValueError("A distillation method requires a teacher checkpoint.")
         if kd_alpha != 0.0:
             raise ValueError("train.kd_alpha must be 0 when no ResNet-18 teacher is provided.")
         if session == "kd":
             raise ValueError("protocol.session=kd requires a ResNet-18 teacher checkpoint.")
+        kd_method = "none"
+    train_cfg["kd_method"] = kd_method
     return has_teacher
 
 
@@ -161,14 +178,30 @@ def main() -> None:
     seed, loader_seed, deterministic = resolve_seed_config(cfg)
     train_cfg = cfg["train"]
     has_teacher = validate_training_mode(cfg, args.teacher_config, args.teacher_checkpoint)
+    kd_method = str(train_cfg.get("kd_method", "none"))
+    kl_direction = {
+        "standard": "teacher||student",
+        "reverse_kd": "student||teacher",
+        "dkd": "decoupled_teacher||student",
+    }.get(kd_method)
     cfg["distillation"] = {
         "enabled": has_teacher,
+        "method": kd_method,
         "teacher_model": "resnet18_cifar" if has_teacher else None,
         "teacher_config": str(args.teacher_config) if has_teacher else None,
         "teacher_checkpoint": str(args.teacher_checkpoint) if has_teacher else None,
         "alpha": float(train_cfg.get("kd_alpha", 0.0)),
         "temperature": float(train_cfg.get("kd_temperature", 4.0)),
-        "kl_direction": "student||teacher" if has_teacher else None,
+        "kl_direction": kl_direction if has_teacher else None,
+        "dkd_tckd_weight": (
+            float(train_cfg.get("dkd_tckd_weight", 1.0)) if kd_method == "dkd" else None
+        ),
+        "dkd_nckd_weight": (
+            float(train_cfg.get("dkd_nckd_weight", 4.0)) if kd_method == "dkd" else None
+        ),
+        "dkd_warmup_epochs": (
+            int(train_cfg.get("dkd_warmup_epochs", 20)) if kd_method == "dkd" else None
+        ),
     }
     seed_everything(seed, deterministic=deterministic)
     if args.resume and is_controlled_comparison(cfg):
@@ -255,9 +288,13 @@ def main() -> None:
     else:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
     criterion = DistillationLoss(
+        method=str(train_cfg.get("kd_method", "none")),
         temperature=float(train_cfg.get("kd_temperature", 4.0)),
         alpha=float(train_cfg.get("kd_alpha", 0.0)),
         label_smoothing=float(train_cfg.get("label_smoothing", 0.0)),
+        dkd_tckd_weight=float(train_cfg.get("dkd_tckd_weight", 1.0)),
+        dkd_nckd_weight=float(train_cfg.get("dkd_nckd_weight", 4.0)),
+        dkd_warmup_epochs=int(train_cfg.get("dkd_warmup_epochs", 20)),
     )
     amp = bool(train_cfg.get("amp", True))
     scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")

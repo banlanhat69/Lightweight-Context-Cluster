@@ -72,6 +72,7 @@ def train_one_epoch(
     limit_batches: int | None = None,
     progress: bool = True,
 ) -> dict[str, float]:
+    criterion.set_epoch(epoch)
     model.train()
     if teacher is not None:
         teacher.eval()

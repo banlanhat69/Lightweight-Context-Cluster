@@ -1,42 +1,60 @@
-# Lightweight HBCC - two no-augmentation sessions
+# Lightweight HBCC - no-augmentation experiments
 
-Repository được thu gọn chỉ còn pipeline cần thiết để chạy hai phiên trên CIFAR-10/CIFAR-100:
+Repository chỉ giữ pipeline cần thiết để chạy các thí nghiệm CIFAR-10/CIFAR-100 không augmentation. Train, validation và test chỉ dùng `ToTensor` và `Normalize`.
+
+## So sánh kiến trúc và KD theo báo cáo HBCC
+
+Mở [notebooks/run_two_sessions.ipynb](notebooks/run_two_sessions.ipynb) để chạy:
 
 1. Baseline CE: ResNet-18, MobileNetV2, ShuffleNetV2, CoC baseline, HBCC-Small và HBCC-Medium.
-2. HBCC KD: HBCC-Small và HBCC-Medium dùng ResNet-18 cùng dataset/seed làm teacher.
+2. HBCC KD theo phương trình trong báo cáo: HBCC-Small và HBCC-Medium dùng ResNet-18 cùng dataset/seed làm teacher.
 
-Không có augmentation: train/validation/test chỉ dùng ToTensor và Normalize. KD dùng alpha=0.5, T=4.0 và KL(student || teacher) theo công thức trong báo cáo HBCC.
+Chỉnh `BASELINE_EPOCHS` và `KD_EPOCHS` trong ô cấu hình. `SMOKE=True` dùng FakeData, một epoch và một batch để kiểm tra nhanh.
 
-## Chạy bằng notebook
+## So sánh Standard KD và DKD trên Kaggle
 
-Mở [notebooks/run_two_sessions.ipynb](notebooks/run_two_sessions.ipynb) và chạy từ trên xuống.
+Mở [notebooks/run_hbcc_kd_dkd_kaggle.ipynb](notebooks/run_hbcc_kd_dkd_kaggle.ipynb). Notebook chạy bốn thí nghiệm cho mỗi dataset/seed:
 
-Notebook mặc định:
+- HBCC-Small với Standard KD (`KL(teacher || student)`);
+- HBCC-Medium với Standard KD;
+- HBCC-Small với DKD;
+- HBCC-Medium với DKD.
 
-- chạy cả CIFAR-10 và CIFAR-100;
-- dùng seed 42;
-- chạy 6 model CE trước rồi 2 HBCC KD cho mỗi dataset;
-- tự bỏ qua run đã hoàn tất và đúng metadata;
-- tổng hợp kết quả vào runs_two_sessions/two_sessions_summary.csv.
+Các đường dẫn Kaggle quan trọng được gom trong một ô cấu hình:
 
-Chỉnh `BASELINE_EPOCHS` và `KD_EPOCHS` trong ô cấu hình notebook để đặt riêng số epoch cho phiên baseline và phiên knowledge distillation. Đặt `SMOKE=True` để kiểm tra nhanh toàn bộ luồng bằng FakeData; chế độ smoke luôn dùng 1 epoch.
+- `REPO_ROOT`;
+- `DATA_ROOTS`;
+- `OUTPUT_ROOT`;
+- `TEACHER_CHECKPOINTS`;
+- `TEACHER_CONFIGS`;
+- `REFERENCE_RESULTS_ROOTS`.
 
-## Chạy bằng command line
+Teacher phải là `best.pth` của ResNet-18 baseline no-augmentation, đúng dataset và seed. Checkpoint do pipeline này tạo đã chứa toàn bộ config; vì vậy có thể đặt `TEACHER_CONFIGS[(dataset, seed)] = None`. Runner sẽ trích config từ checkpoint và kiểm tra state dict, kiến trúc, dataset, seed, epoch và `augmentation: none` trước khi huấn luyện.
+
+Checkpoint HBCC-CE chỉ được đọc để tổng hợp kết quả tham chiếu; student KD luôn khởi tạo lại từ cùng seed để phép so sánh không bị ảnh hưởng bởi warm-start.
+
+## Command line cho Standard KD và DKD
 
 ```powershell
-& D:\Anaconda\envs\CoC\python.exe tools\run_two_sessions.py `
+python tools/run_kd_comparison.py `
   --dataset cifar10 `
-  --output runs_two_sessions
+  --seed 42 `
+  --teacher-checkpoint path/to/resnet18/best.pth `
+  --expected-teacher-epochs 200 `
+  --data-root data `
+  --output runs_kd_comparison `
+  --epochs 200 `
+  --methods standard dkd `
+  --students hbcc_small hbcc_medium `
+  --download-data
 ```
 
-Đổi dataset thành cifar100 để chạy tập còn lại.
+## Runtime chính
 
-## Các file runtime chính
-
-- configs/cifar_fair/model_catalog.yaml
-- configs/cifar_fair/cifar10_no_augmentation.yaml
-- configs/cifar_fair/cifar100_no_augmentation.yaml
-- lightweight_hbcc/
-- tools/train.py
-- tools/run_two_sessions.py
-- notebooks/run_two_sessions.ipynb
+- `configs/cifar_fair/`
+- `lightweight_hbcc/`
+- `tools/train.py`
+- `tools/run_two_sessions.py`
+- `tools/run_kd_comparison.py`
+- `notebooks/run_two_sessions.ipynb`
+- `notebooks/run_hbcc_kd_dkd_kaggle.ipynb`
