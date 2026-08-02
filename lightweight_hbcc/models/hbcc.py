@@ -9,6 +9,81 @@ from .cluster import Stage
 from .layers import CoordinateAugment, PointReducer, make_norm
 
 
+HBCC_PDF_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
+    "hbcc_small": {
+        "name": "hbcc",
+        "use_coord": True,
+        "embed_dims": [48, 80, 160, 224],
+        "depths": [1, 1, 2, 1],
+        "mlp_ratios": 3.0,
+        "heads": [2, 2, 4, 4],
+        "head_dim": [16, 16, 16, 16],
+        "proposals": [[2, 2], [2, 2], [2, 2], [1, 1]],
+        "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
+        "similarities": ["cosine", "cosine", "cosine", "cosine"],
+        "assignment_modes": ["hard", "hard", "hard", "hard"],
+        "assignment_temperatures": [1.0, 1.0, 1.0, 1.0],
+        "positive_similarity_scales": [False, False, False, False],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.0],
+        "channel_shuffle": [True, True, False, False],
+        "layer_scale_init_values": 1.0e-5,
+        "norm": "bn",
+        "stem_patch_size": 3,
+        "stem_stride": 1,
+        "stem_padding": 1,
+        "down_patch_size": 3,
+        "down_stride": 2,
+        "down_padding": 1,
+        "drop_rate": 0.0,
+        "drop_path_rate": 0.05,
+    },
+    "hbcc_medium": {
+        "name": "hbcc",
+        "use_coord": True,
+        "embed_dims": [64, 96, 192, 256],
+        "depths": [1, 1, 2, 1],
+        "mlp_ratios": 3.0,
+        "heads": [2, 3, 4, 4],
+        "head_dim": [16, 16, 16, 16],
+        "proposals": [[2, 2], [2, 2], [2, 2], [1, 1]],
+        "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
+        "similarities": ["cosine", "cosine", "cosine", "cosine"],
+        "assignment_modes": ["hard", "hard", "hard", "hard"],
+        "assignment_temperatures": [1.0, 1.0, 1.0, 1.0],
+        "positive_similarity_scales": [False, False, False, False],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.0],
+        "channel_shuffle": [True, True, False, False],
+        "layer_scale_init_values": 1.0e-5,
+        "norm": "bn",
+        "stem_patch_size": 3,
+        "stem_stride": 1,
+        "stem_padding": 1,
+        "down_patch_size": 3,
+        "down_stride": 2,
+        "down_padding": 1,
+        "drop_rate": 0.0,
+        "drop_path_rate": 0.08,
+    },
+}
+
+
+def validate_hbcc_pdf_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
+    """Return catalog drift errors for an official HBCC PDF variant."""
+
+    expected = HBCC_PDF_CIFAR_CONFIGS.get(model_key)
+    if expected is None:
+        return [f"unknown HBCC PDF variant: {model_key}"]
+    return [
+        f"{model_key}.{field} must be {value!r}, got {config.get(field)!r}"
+        for field, value in expected.items()
+        if config.get(field) != value
+    ]
+
+
 def _as_list(value: Any, length: int) -> list[Any]:
     if isinstance(value, (list, tuple)):
         if len(value) != length:
@@ -26,38 +101,44 @@ def _tuple2(value: Any) -> tuple[int, int]:
 
 
 class HBCCNet(nn.Module):
-    """CIFAR-oriented lightweight Context Cluster/HBCC network."""
+    """HBCC CIFAR architecture from the accompanying paper.
+
+    The defaults are the HBCC-Small variant. In particular, the stem keeps the
+    32x32 CIFAR resolution, the four stages operate at 32/16/8/4, and the final
+    stage uses one global proposal so that clustering never degenerates to one
+    point per center.
+    """
 
     def __init__(
         self,
         num_classes: int = 10,
         in_chans: int = 3,
         use_coord: bool = True,
-        embed_dims: list[int] | tuple[int, int, int, int] = (32, 48, 96, 160),
+        embed_dims: list[int] | tuple[int, int, int, int] = (48, 80, 160, 224),
         depths: list[int] | tuple[int, int, int, int] = (1, 1, 2, 1),
-        mlp_ratios: float | list[float] = 2.0,
-        heads: list[int] | tuple[int, int, int, int] = (1, 2, 2, 4),
+        mlp_ratios: float | list[float] = 3.0,
+        heads: list[int] | tuple[int, int, int, int] = (2, 2, 4, 4),
         head_dim: int | list[int] = 16,
-        proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (2, 2)),
+        proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (1, 1)),
         folds: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((4, 4), (2, 2), (1, 1), (1, 1)),
         similarities: str | list[str] = "cosine",
         assignment_modes: str | list[str] = "hard",
         assignment_temperatures: float | list[float] = 1.0,
         positive_similarity_scales: bool | list[bool] = False,
-        local_branches: str | list[str] = "dwconv",
-        local_ratios: float | list[float] = 0.0,
-        stage_modes: str | list[str] = ("local", "hybrid", "cluster", "cluster"),
-        channel_shuffle: bool | list[bool] = False,
+        local_branches: str | list[str] = ("lbpconv", "dwconv", "identity", "identity"),
+        local_ratios: float | list[float] = (0.5, 0.5, 0.0, 0.0),
+        stage_modes: str | list[str] = ("hybrid", "hybrid", "cluster", "cluster"),
+        channel_shuffle: bool | list[bool] = (True, True, False, False),
         layer_scale_init_values: float | list[float] = 1e-5,
         norm: str = "bn",
         stem_patch_size: int = 3,
-        stem_stride: int = 2,
+        stem_stride: int = 1,
         stem_padding: int = 1,
         down_patch_size: int | list[int] | tuple[int, int, int] = 3,
         down_stride: int | list[int] | tuple[int, int, int] = 2,
         down_padding: int | list[int] | tuple[int, int, int] = 1,
         drop_rate: float = 0.0,
-        drop_path_rate: float = 0.0,
+        drop_path_rate: float = 0.05,
     ) -> None:
         super().__init__()
         if len(embed_dims) != 4 or len(depths) != 4:
@@ -66,6 +147,7 @@ class HBCCNet(nn.Module):
         self.embed_dims = list(embed_dims)
         self.depths = list(depths)
         self.use_coord = use_coord
+        self.stem_stride = int(stem_stride)
         self.coord = CoordinateAugment(enabled=use_coord)
         stem_in = in_chans + (2 if use_coord else 0)
         self.stem = PointReducer(stem_in, embed_dims[0], stem_patch_size, stem_stride, stem_padding, norm=norm)
@@ -83,6 +165,8 @@ class HBCCNet(nn.Module):
         layer_scale_init_values = _as_list(layer_scale_init_values, 4)
         proposals = [_tuple2(v) for v in proposals]
         folds = [_tuple2(v) for v in folds]
+        self.proposals = proposals
+        self.folds = folds
         down_patch_sizes = [int(v) for v in _as_list(down_patch_size, 3)]
         down_strides = [int(v) for v in _as_list(down_stride, 3)]
         down_paddings = [int(v) for v in _as_list(down_padding, 3)]
@@ -151,109 +235,3 @@ class HBCCNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.forward_features(x)
         return self.head(x.mean(dim=(-2, -1)))
-
-def hbcc_latency_tiny(num_classes: int = 10, **kwargs) -> HBCCNet:
-    return HBCCNet(
-        num_classes=num_classes,
-        embed_dims=[32, 48, 96, 160],
-        depths=[1, 1, 2, 1],
-        mlp_ratios=2.0,
-        heads=[1, 2, 2, 4],
-        head_dim=[16, 16, 16, 16],
-        proposals=[(2, 2), (2, 2), (2, 2), (2, 2)],
-        folds=[(4, 4), (2, 2), (1, 1), (1, 1)],
-        stage_modes=["local", "hybrid", "cluster", "cluster"],
-        local_branches=["dwconv", "dwconv", "identity", "identity"],
-        local_ratios=[1.0, 0.5, 0.0, 0.0],
-        use_coord=True,
-        **kwargs,
-    )
-
-
-def hbcc_latency_small(num_classes: int = 10, **kwargs) -> HBCCNet:
-    return HBCCNet(
-        num_classes=num_classes,
-        embed_dims=[32, 64, 128, 192],
-        depths=[1, 2, 2, 1],
-        mlp_ratios=3.0,
-        heads=[1, 2, 4, 4],
-        head_dim=[16, 16, 16, 16],
-        proposals=[(2, 2), (2, 2), (2, 2), (2, 2)],
-        folds=[(4, 4), (2, 2), (1, 1), (1, 1)],
-        stage_modes=["local", "hybrid", "cluster", "cluster"],
-        local_branches=["dwconv", "dwconv", "identity", "identity"],
-        local_ratios=[1.0, 0.5, 0.0, 0.0],
-        use_coord=True,
-        **kwargs,
-    )
-
-
-def hbcc_current_reference(num_classes: int = 10, **kwargs) -> HBCCNet:
-    """Reference matching the diagnosed slow path: no xy and first stage at 32x32."""
-
-    return HBCCNet(
-        num_classes=num_classes,
-        embed_dims=[32, 64, 128, 192],
-        depths=[1, 1, 2, 1],
-        mlp_ratios=3.0,
-        heads=[2, 2, 4, 4],
-        head_dim=[16, 16, 16, 16],
-        proposals=[(2, 2), (2, 2), (2, 2), (2, 2)],
-        folds=[(1, 1), (2, 2), (1, 1), (1, 1)],
-        stage_modes=["cluster", "hybrid", "cluster", "cluster"],
-        local_branches=["identity", "dwconv", "identity", "identity"],
-        local_ratios=[0.0, 0.5, 0.0, 0.0],
-        use_coord=False,
-        stem_stride=1,
-        **kwargs,
-    )
-
-
-def phbcc_2m(num_classes: int = 10, **kwargs) -> HBCCNet:
-    """Progressive-capacity HBCC constrained to fewer than 2M CIFAR params."""
-
-    model_kwargs: dict[str, Any] = {
-        "use_coord": True,
-        "embed_dims": [56, 88, 176, 232],
-        "depths": [2, 2, 4, 1],
-        "mlp_ratios": [3.0, 3.0, 3.0, 2.5],
-        "heads": [2, 2, 4, 4],
-        "head_dim": [16, 16, 16, 16],
-        "proposals": [(2, 2), (2, 2), (2, 2), (2, 2)],
-        "folds": [(4, 4), (2, 2), (1, 1), (1, 1)],
-        "similarities": ["cosine", "cosine", "cosine", "cosine"],
-        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
-        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
-        "local_ratios": [0.5, 0.5, 0.0, 0.0],
-        "channel_shuffle": [True, True, False, False],
-        "norm": "bn",
-        "stem_patch_size": 3,
-        "stem_stride": 2,
-        "stem_padding": 1,
-        "down_patch_size": 3,
-        "down_stride": 2,
-        "down_padding": 1,
-        "drop_rate": 0.0,
-        "drop_path_rate": 0.10,
-    }
-    model_kwargs.update(kwargs)
-    return HBCCNet(num_classes=num_classes, **model_kwargs)
-
-
-def coc_cifar_baseline(num_classes: int = 10, **kwargs) -> HBCCNet:
-    """CoC-style CIFAR baseline: RGB+XY, cluster blocks in every stage."""
-
-    return HBCCNet(
-        num_classes=num_classes,
-        embed_dims=[32, 64, 196, 320],
-        depths=[2, 2, 3, 1],
-        mlp_ratios=[4.0, 4.0, 3.0, 3.0],
-        heads=[2, 4, 4, 4],
-        head_dim=[16, 16, 24, 24],
-        proposals=[(2, 2), (2, 2), (2, 2), (2, 2)],
-        folds=[(4, 4), (2, 2), (1, 1), (1, 1)],
-        stage_modes=["cluster", "cluster", "cluster", "cluster"],
-        local_ratios=[0.0, 0.0, 0.0, 0.0],
-        use_coord=True,
-        **kwargs,
-    )

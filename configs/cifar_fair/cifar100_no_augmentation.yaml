@@ -1,5 +1,5 @@
 protocol:
-  name: cifar100_two_session_noaug_v1
+  name: cifar100_two_session_noaug_hbcc_pdf_v2
   purpose: architecture_comparison_two_sessions
   dataset: cifar100
   session: baseline

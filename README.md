@@ -2,6 +2,19 @@
 
 Repository chỉ giữ pipeline cần thiết để chạy các thí nghiệm CIFAR-10/CIFAR-100 không augmentation. Train, validation và test chỉ dùng `ToTensor` và `Normalize`.
 
+## Kiến trúc HBCC theo PDF
+
+Hai model HBCC trong `configs/cifar_fair/model_catalog.yaml` dùng đúng pipeline CIFAR đã sửa suy biến token trong báo cáo:
+
+- độ phân giải bốn stage: `32x32 -> 16x16 -> 8x8 -> 4x4` (`stem_stride=1`);
+- fold: `4x4, 2x2, 1x1, 1x1`;
+- proposal: `2x2, 2x2, 2x2, 1x1`, nên mỗi cluster có `r=16` điểm;
+- độ sâu của cả Small và Medium: `[1, 1, 2, 1]`;
+- embed dim Small: `[48, 80, 160, 224]`, Medium: `[64, 96, 192, 256]`;
+- Drop Path Small/Medium: `0.05/0.08`.
+
+PointReducer giữ convolution `3x3`, stride 2. Cấu hình này khớp số tham số được báo cáo trong PDF: khoảng 1.27M/1.76M trên CIFAR-10 và 1.30M/1.78M trên CIFAR-100. Checkpoint HBCC tạo từ kiến trúc cũ không tương thích về giao thức thực nghiệm và không được dùng để tiếp tục so sánh; ResNet-18 teacher no-augmentation vẫn dùng lại được.
+
 ## So sánh kiến trúc và KD theo báo cáo HBCC
 
 Mở [notebooks/run_two_sessions.ipynb](notebooks/run_two_sessions.ipynb) để chạy:

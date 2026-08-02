@@ -18,6 +18,7 @@ import yaml
 from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
 from lightweight_hbcc.models import build_model
+from lightweight_hbcc.models.hbcc import validate_hbcc_pdf_cifar_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -410,6 +411,15 @@ def main(argv: list[str] | None = None) -> None:
 
     num_classes = 100 if args.dataset == "cifar100" else 10
     for student in args.students:
+        architecture_errors = validate_hbcc_pdf_cifar_config(
+            student,
+            catalog[student]["model"],
+        )
+        if architecture_errors:
+            raise ValueError(
+                "HBCC PDF architecture validation failed:\n- "
+                + "\n- ".join(architecture_errors)
+            )
         model_cfg = deepcopy(catalog[student]["model"])
         model_cfg["num_classes"] = num_classes
         model = build_model({"model": model_cfg}).eval()

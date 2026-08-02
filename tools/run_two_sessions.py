@@ -17,6 +17,7 @@ import yaml
 from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
 from lightweight_hbcc.models import build_model
+from lightweight_hbcc.models.hbcc import validate_hbcc_pdf_cifar_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,7 +76,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--data-root", default="data")
-    parser.add_argument("--output", default="runs_two_sessions")
+    parser.add_argument("--output", default="runs_two_sessions_hbcc_pdf")
     parser.add_argument("--baseline-epochs", type=int)
     parser.add_argument("--kd-epochs", type=int)
     parser.add_argument("--print-every", type=int, default=5)
@@ -147,6 +148,8 @@ def validate_protocol(
         model_cfg["num_classes"] = num_classes
         if entry.get("kd_student") and model_cfg.get("name") != "hbcc":
             errors.append(f"{name}: KD students must use the HBCC architecture")
+        if entry.get("kd_student"):
+            errors.extend(validate_hbcc_pdf_cifar_config(name, entry["model"]))
         try:
             model = build_model({"model": model_cfg}).eval()
             with torch.inference_mode():
