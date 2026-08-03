@@ -37,12 +37,12 @@ models:
       drop_path_rate: 0.05
 
   hbcc_small:
-    display_name: HBCC-Small
+    display_name: HBCC-Small-Wide
     kd_student: true
     model:
       name: hbcc
       use_coord: true
-      embed_dims: [48, 80, 160, 224]
+      embed_dims: [48, 80, 160, 256]
       depths: [1, 1, 2, 1]
       mlp_ratios: 3.0
       heads: [2, 2, 4, 4]
@@ -69,12 +69,12 @@ models:
       drop_path_rate: 0.05
 
   hbcc_medium:
-    display_name: HBCC-Medium
+    display_name: HBCC-Medium-Wide
     kd_student: true
     model:
       name: hbcc
       use_coord: true
-      embed_dims: [64, 96, 192, 256]
+      embed_dims: [64, 96, 192, 288]
       depths: [1, 1, 2, 1]
       mlp_ratios: 3.0
       heads: [2, 3, 4, 4]

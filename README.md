@@ -2,27 +2,31 @@
 
 Repository chỉ giữ pipeline cần thiết để chạy các thí nghiệm CIFAR-10/CIFAR-100 không augmentation. Train, validation và test chỉ dùng `ToTensor` và `Normalize`.
 
-## Kiến trúc HBCC theo PDF
+## Kiến trúc HBCC mở rộng Stage 4
 
-Hai model HBCC trong `configs/cifar_fair/model_catalog.yaml` dùng đúng pipeline CIFAR đã sửa suy biến token trong báo cáo:
+Hai model HBCC giữ pipeline CIFAR đã sửa suy biến token trong báo cáo và mở rộng riêng số channel Stage 4:
 
 - độ phân giải bốn stage: `32x32 -> 16x16 -> 8x8 -> 4x4` (`stem_stride=1`);
 - fold: `4x4, 2x2, 1x1, 1x1`;
 - proposal: `2x2, 2x2, 2x2, 1x1`, nên mỗi cluster có `r=16` điểm;
 - độ sâu của cả Small và Medium: `[1, 1, 2, 1]`;
-- embed dim Small: `[48, 80, 160, 224]`, Medium: `[64, 96, 192, 256]`;
+- embed dim Small: `[48, 80, 160, 256]`, Medium: `[64, 96, 192, 288]`;
 - Drop Path Small/Medium: `0.05/0.08`.
 
-PointReducer giữ convolution `3x3`, stride 2. Cấu hình này khớp số tham số được báo cáo trong PDF: khoảng 1.27M/1.76M trên CIFAR-10 và 1.30M/1.78M trên CIFAR-100. Checkpoint HBCC tạo từ kiến trúc cũ không tương thích về giao thức thực nghiệm và không được dùng để tiếp tục so sánh; ResNet-18 teacher no-augmentation vẫn dùng lại được.
+PointReducer giữ convolution `3x3`, stride 2. Sau khi mở rộng, HBCC-Small có khoảng 1.42M tham số và HBCC-Medium khoảng 1.92M tham số trên CIFAR-10. Checkpoint HBCC tạo trước thay đổi Stage 4 không tương thích; ResNet-18 teacher no-augmentation vẫn dùng lại được trong pipeline KD riêng.
 
-## So sánh kiến trúc và KD theo báo cáo HBCC
+## So sánh kiến trúc bằng CE
 
-Mở [notebooks/run_two_sessions.ipynb](notebooks/run_two_sessions.ipynb) để chạy:
+Mở [notebooks/run_ce_experiments.ipynb](notebooks/run_ce_experiments.ipynb) để huấn luyện CE:
 
-1. Baseline CE: ResNet-18, MobileNetV2, ShuffleNetV2, CoC baseline, HBCC-Small và HBCC-Medium.
-2. HBCC KD theo phương trình trong báo cáo: HBCC-Small và HBCC-Medium dùng ResNet-18 cùng dataset/seed làm teacher.
+- ResNet-18;
+- MobileNetV2;
+- ShuffleNetV2;
+- CoC baseline;
+- HBCC-Small-Wide;
+- HBCC-Medium-Wide.
 
-Chỉnh `BASELINE_EPOCHS` và `KD_EPOCHS` trong ô cấu hình. `SMOKE=True` dùng FakeData, một epoch và một batch để kiểm tra nhanh.
+Chỉnh `CE_EPOCHS` và các switch `TRAIN_*` trong ô cấu hình. `SMOKE=True` dùng FakeData, một epoch và một batch để kiểm tra nhanh. Runner này không chứa teacher hoặc loss KD.
 
 ## So sánh Standard KD và DKD trên Kaggle
 
@@ -53,7 +57,7 @@ python tools/run_kd_comparison.py `
   --dataset cifar10 `
   --seed 42 `
   --teacher-checkpoint path/to/resnet18/best.pth `
-  --expected-teacher-epochs 200 `
+  --expected-teacher-epochs 300 `
   --data-root data `
   --output runs_kd_comparison `
   --epochs 200 `
@@ -67,7 +71,7 @@ python tools/run_kd_comparison.py `
 - `configs/cifar_fair/`
 - `lightweight_hbcc/`
 - `tools/train.py`
-- `tools/run_two_sessions.py`
+- `tools/run_ce_experiments.py`
 - `tools/run_kd_comparison.py`
-- `notebooks/run_two_sessions.ipynb`
+- `notebooks/run_ce_experiments.ipynb`
 - `notebooks/run_hbcc_kd_dkd_kaggle.ipynb`

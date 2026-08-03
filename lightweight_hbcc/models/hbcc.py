@@ -9,11 +9,11 @@ from .cluster import Stage
 from .layers import CoordinateAugment, PointReducer, make_norm
 
 
-HBCC_PDF_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
+HBCC_WIDE_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
     "hbcc_small": {
         "name": "hbcc",
         "use_coord": True,
-        "embed_dims": [48, 80, 160, 224],
+        "embed_dims": [48, 80, 160, 256],
         "depths": [1, 1, 2, 1],
         "mlp_ratios": 3.0,
         "heads": [2, 2, 4, 4],
@@ -42,7 +42,7 @@ HBCC_PDF_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
     "hbcc_medium": {
         "name": "hbcc",
         "use_coord": True,
-        "embed_dims": [64, 96, 192, 256],
+        "embed_dims": [64, 96, 192, 288],
         "depths": [1, 1, 2, 1],
         "mlp_ratios": 3.0,
         "heads": [2, 3, 4, 4],
@@ -71,12 +71,12 @@ HBCC_PDF_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
 }
 
 
-def validate_hbcc_pdf_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
-    """Return catalog drift errors for an official HBCC PDF variant."""
+def validate_hbcc_wide_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
+    """Return catalog drift errors for the widened-Stage-4 HBCC variants."""
 
-    expected = HBCC_PDF_CIFAR_CONFIGS.get(model_key)
+    expected = HBCC_WIDE_CIFAR_CONFIGS.get(model_key)
     if expected is None:
-        return [f"unknown HBCC PDF variant: {model_key}"]
+        return [f"unknown widened HBCC variant: {model_key}"]
     return [
         f"{model_key}.{field} must be {value!r}, got {config.get(field)!r}"
         for field, value in expected.items()
@@ -101,12 +101,11 @@ def _tuple2(value: Any) -> tuple[int, int]:
 
 
 class HBCCNet(nn.Module):
-    """HBCC CIFAR architecture from the accompanying paper.
+    """CIFAR HBCC with the paper's spatial design and a widened final stage.
 
-    The defaults are the HBCC-Small variant. In particular, the stem keeps the
-    32x32 CIFAR resolution, the four stages operate at 32/16/8/4, and the final
-    stage uses one global proposal so that clustering never degenerates to one
-    point per center.
+    The defaults are the widened HBCC-Small variant. The stem keeps the 32x32
+    CIFAR resolution, the stages operate at 32/16/8/4, and Stage 4 uses one
+    global proposal with 256 output features.
     """
 
     def __init__(
@@ -114,7 +113,7 @@ class HBCCNet(nn.Module):
         num_classes: int = 10,
         in_chans: int = 3,
         use_coord: bool = True,
-        embed_dims: list[int] | tuple[int, int, int, int] = (48, 80, 160, 224),
+        embed_dims: list[int] | tuple[int, int, int, int] = (48, 80, 160, 256),
         depths: list[int] | tuple[int, int, int, int] = (1, 1, 2, 1),
         mlp_ratios: float | list[float] = 3.0,
         heads: list[int] | tuple[int, int, int, int] = (2, 2, 4, 4),

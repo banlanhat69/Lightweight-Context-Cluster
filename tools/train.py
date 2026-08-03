@@ -148,8 +148,11 @@ def validate_teacher_artifacts(
         errors.append("teacher config must come from the baseline session")
     if teacher_cfg.get("protocol", {}).get("augmentation") != "none":
         errors.append("teacher config must declare augmentation=none")
-    if float(teacher_cfg.get("train", {}).get("kd_alpha", -1.0)) != 0.0:
-        errors.append("teacher must be trained with CE (kd_alpha=0)")
+    teacher_train = teacher_cfg.get("train", {})
+    if float(teacher_train.get("kd_alpha", 0.0)) != 0.0:
+        errors.append("teacher must be trained with CE (kd_alpha=0 or omitted)")
+    if str(teacher_train.get("kd_method", "none")).lower() not in {"none", "ce"}:
+        errors.append("teacher config must declare CE-only training")
 
     student_dataset = student_cfg.get("protocol", {}).get("dataset")
     teacher_dataset = teacher_cfg.get("protocol", {}).get("dataset")

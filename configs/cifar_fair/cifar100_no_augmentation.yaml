@@ -1,14 +1,12 @@
 protocol:
-  name: cifar100_two_session_noaug_hbcc_pdf_v2
-  purpose: architecture_comparison_two_sessions
+  name: cifar100_ce_noaug_hbcc_wide_v3
+  purpose: architecture_comparison_ce_only
   dataset: cifar100
   session: baseline
   augmentation: none
   canonical: true
   effective_epochs: 300
-  baseline_epochs: 300
-  kd_epochs: 250
-  teacher: resnet18
+  ce_epochs: 300
 
 data:
   name: cifar100
@@ -32,6 +30,4 @@ train:
   weight_decay: 0.05
   label_smoothing: 0.10
   amp: true
-  kd_alpha: 0.0
-  kd_temperature: 4.0
   skip_test: false

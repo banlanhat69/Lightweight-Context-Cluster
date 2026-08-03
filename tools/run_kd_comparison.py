@@ -18,7 +18,7 @@ import yaml
 from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
 from lightweight_hbcc.models import build_model
-from lightweight_hbcc.models.hbcc import validate_hbcc_pdf_cifar_config
+from lightweight_hbcc.models.hbcc import validate_hbcc_wide_cifar_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,8 +172,11 @@ def resolve_teacher(
         errors.append(f"teacher model must be {TEACHER_MODEL_NAME}")
     if int(teacher_cfg.get("train", {}).get("seed", -1)) != args.seed:
         errors.append("teacher seed does not match --seed")
-    if float(teacher_cfg.get("train", {}).get("kd_alpha", -1.0)) != 0.0:
-        errors.append("teacher must be trained with CE (kd_alpha=0)")
+    teacher_train = teacher_cfg.get("train", {})
+    if float(teacher_train.get("kd_alpha", 0.0)) != 0.0:
+        errors.append("teacher must be trained with CE (kd_alpha=0 or omitted)")
+    if str(teacher_train.get("kd_method", "none")).lower() not in {"none", "ce"}:
+        errors.append("teacher config must declare CE-only training")
     if args.expected_teacher_epochs is not None and int(
         teacher_cfg.get("train", {}).get("epochs", -1)
     ) != int(args.expected_teacher_epochs):
@@ -260,8 +263,8 @@ def make_student_config(
             "teacher_fingerprint": teacher_fingerprint,
         },
         "protocol": {
-            "name": f"{args.dataset}_hbcc_{method}_noaug_v1",
-            "purpose": "hbcc_standard_kd_vs_dkd_no_augmentation",
+            "name": f"{args.dataset}_hbcc_wide_{method}_noaug_v2",
+            "purpose": "hbcc_wide_standard_kd_vs_dkd_no_augmentation",
             "session": "kd",
             "augmentation": "none",
             "canonical": False,
@@ -411,13 +414,13 @@ def main(argv: list[str] | None = None) -> None:
 
     num_classes = 100 if args.dataset == "cifar100" else 10
     for student in args.students:
-        architecture_errors = validate_hbcc_pdf_cifar_config(
+        architecture_errors = validate_hbcc_wide_cifar_config(
             student,
             catalog[student]["model"],
         )
         if architecture_errors:
             raise ValueError(
-                "HBCC PDF architecture validation failed:\n- "
+                "Widened HBCC architecture validation failed:\n- "
                 + "\n- ".join(architecture_errors)
             )
         model_cfg = deepcopy(catalog[student]["model"])
