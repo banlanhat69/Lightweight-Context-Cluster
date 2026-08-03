@@ -37,6 +37,8 @@ Mở [notebooks/run_hbcc_kd_dkd_kaggle.ipynb](notebooks/run_hbcc_kd_dkd_kaggle.i
 - HBCC-Small với DKD;
 - HBCC-Medium với DKD.
 
+Có thể bật/tắt từng student và từng phương pháp bằng các switch `TRAIN_HBCC_*` và `RUN_*_KD`, đồng thời chỉnh độc lập `KD_EPOCHS`. Mỗi run được gắn định danh kiến trúc `hbcc_wide_stage4_v1` và kiểm tra chính xác `embed_dims` trước khi train, nên kết quả HBCC cũ không bị nhận nhầm là kết quả của model mới.
+
 Các đường dẫn Kaggle quan trọng được gom trong một ô cấu hình:
 
 - `REPO_ROOT`;
@@ -60,7 +62,7 @@ python tools/run_kd_comparison.py `
   --expected-teacher-epochs 300 `
   --data-root data `
   --output runs_kd_comparison `
-  --epochs 200 `
+  --epochs 300 `
   --methods standard dkd `
   --students hbcc_small hbcc_medium `
   --download-data

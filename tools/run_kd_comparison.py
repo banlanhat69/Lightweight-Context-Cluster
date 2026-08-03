@@ -30,6 +30,7 @@ RECIPE_PATHS = {
 }
 METHODS = ("standard", "dkd")
 TEACHER_MODEL_NAME = "resnet18_cifar"
+HBCC_ARCHITECTURE = "hbcc_wide_stage4_v1"
 _REMOVED_BATCH_AUGMENTATION_KEYS = {"mixup_alpha", "cutmix_alpha", "cutmix_prob"}
 
 
@@ -54,7 +55,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--temperature", type=float, default=4.0)
     parser.add_argument("--standard-alpha", type=float, default=0.5)
     parser.add_argument("--dkd-tckd-weight", type=float, default=1.0)
@@ -234,7 +235,7 @@ def experiment_name(
         )
     smoke_token = "_smoke" if args.smoke else ""
     return (
-        f"{args.dataset}_noaug_{student}_seed{args.seed}_{method_token}"
+        f"{args.dataset}_noaug_{student}_wide_stage4_seed{args.seed}_{method_token}"
         f"_e{epochs}_teacher{teacher_fingerprint}{smoke_token}"
     )
 
@@ -255,15 +256,33 @@ def make_student_config(
         if args.label_smoothing is None
         else float(args.label_smoothing)
     )
+    train_patch: dict[str, Any] = {
+        "seed": args.seed,
+        "epochs": epochs,
+        "kd_method": method,
+        "kd_temperature": args.temperature,
+        "label_smoothing": label_smoothing,
+    }
+    if method == "standard":
+        train_patch["kd_alpha"] = args.standard_alpha
+    else:
+        train_patch.update(
+            {
+                "dkd_tckd_weight": args.dkd_tckd_weight,
+                "dkd_nckd_weight": args.dkd_nckd_weight,
+                "dkd_warmup_epochs": args.dkd_warmup_epochs,
+            }
+        )
     patch: dict[str, Any] = {
         "experiment": {
             "name": name,
             "model_key": student,
+            "architecture": HBCC_ARCHITECTURE,
             "teacher_run": teacher_cfg.get("experiment", {}).get("name"),
             "teacher_fingerprint": teacher_fingerprint,
         },
         "protocol": {
-            "name": f"{args.dataset}_hbcc_wide_{method}_noaug_v2",
+            "name": f"{args.dataset}_hbcc_wide_{method}_noaug_v3",
             "purpose": "hbcc_wide_standard_kd_vs_dkd_no_augmentation",
             "session": "kd",
             "augmentation": "none",
@@ -276,17 +295,7 @@ def make_student_config(
             "download": bool(args.download_data),
             "loader_seed": args.seed,
         },
-        "train": {
-            "seed": args.seed,
-            "epochs": epochs,
-            "kd_method": method,
-            "kd_alpha": args.standard_alpha if method == "standard" else 0.0,
-            "kd_temperature": args.temperature,
-            "dkd_tckd_weight": args.dkd_tckd_weight,
-            "dkd_nckd_weight": args.dkd_nckd_weight,
-            "dkd_warmup_epochs": args.dkd_warmup_epochs,
-            "label_smoothing": label_smoothing,
-        },
+        "train": train_patch,
         "model": deepcopy(model_entry["model"]),
     }
     if args.workers is not None:
@@ -413,6 +422,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError(f"Only catalogued HBCC KD students are allowed: {invalid_students}")
 
     num_classes = 100 if args.dataset == "cifar100" else 10
+    architecture_summaries: list[str] = []
     for student in args.students:
         architecture_errors = validate_hbcc_wide_cifar_config(
             student,
@@ -432,6 +442,9 @@ def main(argv: list[str] | None = None) -> None:
             raise ValueError(
                 f"{student} output must be (1, {num_classes}), got {tuple(output.shape)}"
             )
+        architecture_summaries.append(
+            f"{student}:embed_dims={model_cfg['embed_dims']}"
+        )
         del model
 
     output_root = Path(args.output).expanduser().resolve()
@@ -443,9 +456,11 @@ def main(argv: list[str] | None = None) -> None:
         "KD comparison preflight: "
         f"dataset={args.dataset} seed={args.seed} augmentation=none "
         f"students={args.students} methods={args.methods} "
+        f"architecture={HBCC_ARCHITECTURE} "
         f"teacher={teacher_checkpoint} fingerprint={teacher_fingerprint}",
         flush=True,
     )
+    print("KD students: " + "; ".join(architecture_summaries), flush=True)
     if args.validate_only:
         return
 

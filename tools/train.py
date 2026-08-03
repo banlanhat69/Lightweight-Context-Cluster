@@ -193,7 +193,11 @@ def main() -> None:
         "teacher_model": "resnet18_cifar" if has_teacher else None,
         "teacher_config": str(args.teacher_config) if has_teacher else None,
         "teacher_checkpoint": str(args.teacher_checkpoint) if has_teacher else None,
-        "alpha": float(train_cfg.get("kd_alpha", 0.0)),
+        "alpha": (
+            float(train_cfg.get("kd_alpha", 0.0))
+            if kd_method in {"standard", "reverse_kd"}
+            else None
+        ),
         "temperature": float(train_cfg.get("kd_temperature", 4.0)),
         "kl_direction": kl_direction if has_teacher else None,
         "dkd_tckd_weight": (
