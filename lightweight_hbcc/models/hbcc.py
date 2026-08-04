@@ -9,25 +9,25 @@ from .cluster import Stage
 from .layers import CoordinateAugment, PointReducer, make_norm
 
 
-HBCC_WIDE_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
+HBCC_ACCURACY_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
     "hbcc_small": {
         "name": "hbcc",
         "use_coord": True,
         "embed_dims": [48, 80, 160, 256],
-        "depths": [1, 1, 2, 1],
+        "depths": [1, 1, 2, 2],
         "mlp_ratios": 3.0,
         "heads": [2, 2, 4, 4],
         "head_dim": [16, 16, 16, 16],
-        "proposals": [[2, 2], [2, 2], [2, 2], [1, 1]],
+        "proposals": [[2, 2], [2, 2], [2, 2], [2, 2]],
         "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
         "similarities": ["cosine", "cosine", "cosine", "cosine"],
-        "assignment_modes": ["hard", "hard", "hard", "hard"],
-        "assignment_temperatures": [1.0, 1.0, 1.0, 1.0],
+        "assignment_modes": ["hard_st", "hard_st", "hard_st", "hard_st"],
+        "assignment_temperatures": [1.0, 1.0, 1.0, 0.7],
         "positive_similarity_scales": [False, False, False, False],
-        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
-        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
-        "local_ratios": [0.5, 0.5, 0.0, 0.0],
-        "channel_shuffle": [True, True, False, False],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "hybrid"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "dwconv"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.25],
+        "channel_shuffle": [True, True, False, True],
         "layer_scale_init_values": 1.0e-5,
         "norm": "bn",
         "stem_patch_size": 3,
@@ -43,20 +43,20 @@ HBCC_WIDE_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
         "name": "hbcc",
         "use_coord": True,
         "embed_dims": [64, 96, 192, 288],
-        "depths": [1, 1, 2, 1],
+        "depths": [1, 1, 2, 2],
         "mlp_ratios": 3.0,
         "heads": [2, 3, 4, 4],
         "head_dim": [16, 16, 16, 16],
-        "proposals": [[2, 2], [2, 2], [2, 2], [1, 1]],
+        "proposals": [[2, 2], [2, 2], [2, 2], [2, 2]],
         "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
         "similarities": ["cosine", "cosine", "cosine", "cosine"],
-        "assignment_modes": ["hard", "hard", "hard", "hard"],
-        "assignment_temperatures": [1.0, 1.0, 1.0, 1.0],
+        "assignment_modes": ["hard_st", "hard_st", "hard_st", "hard_st"],
+        "assignment_temperatures": [1.0, 1.0, 1.0, 0.7],
         "positive_similarity_scales": [False, False, False, False],
-        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
-        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
-        "local_ratios": [0.5, 0.5, 0.0, 0.0],
-        "channel_shuffle": [True, True, False, False],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "hybrid"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "dwconv"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.25],
+        "channel_shuffle": [True, True, False, True],
         "layer_scale_init_values": 1.0e-5,
         "norm": "bn",
         "stem_patch_size": 3,
@@ -71,12 +71,12 @@ HBCC_WIDE_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
 }
 
 
-def validate_hbcc_wide_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
-    """Return catalog drift errors for the widened-Stage-4 HBCC variants."""
+def validate_hbcc_accuracy_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
+    """Return catalog drift errors for the accuracy-oriented HBCC variants."""
 
-    expected = HBCC_WIDE_CIFAR_CONFIGS.get(model_key)
+    expected = HBCC_ACCURACY_CIFAR_CONFIGS.get(model_key)
     if expected is None:
-        return [f"unknown widened HBCC variant: {model_key}"]
+        return [f"unknown accuracy-oriented HBCC variant: {model_key}"]
     return [
         f"{model_key}.{field} must be {value!r}, got {config.get(field)!r}"
         for field, value in expected.items()
@@ -101,11 +101,12 @@ def _tuple2(value: Any) -> tuple[int, int]:
 
 
 class HBCCNet(nn.Module):
-    """CIFAR HBCC with the paper's spatial design and a widened final stage.
+    """Accuracy-oriented CIFAR HBCC with an information-preserving Stage 4.
 
-    The defaults are the widened HBCC-Small variant. The stem keeps the 32x32
-    CIFAR resolution, the stages operate at 32/16/8/4, and Stage 4 uses one
-    global proposal with 256 output features.
+    The stem keeps the 32x32 CIFAR resolution and the stages operate at
+    32/16/8/4. Stage 4 uses four proposals, a 25% depthwise-convolution branch,
+    straight-through hard assignment, and two blocks to avoid a one-center
+    bottleneck before global pooling.
     """
 
     def __init__(
@@ -114,20 +115,20 @@ class HBCCNet(nn.Module):
         in_chans: int = 3,
         use_coord: bool = True,
         embed_dims: list[int] | tuple[int, int, int, int] = (48, 80, 160, 256),
-        depths: list[int] | tuple[int, int, int, int] = (1, 1, 2, 1),
+        depths: list[int] | tuple[int, int, int, int] = (1, 1, 2, 2),
         mlp_ratios: float | list[float] = 3.0,
         heads: list[int] | tuple[int, int, int, int] = (2, 2, 4, 4),
         head_dim: int | list[int] = 16,
-        proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (1, 1)),
+        proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (2, 2)),
         folds: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((4, 4), (2, 2), (1, 1), (1, 1)),
         similarities: str | list[str] = "cosine",
-        assignment_modes: str | list[str] = "hard",
-        assignment_temperatures: float | list[float] = 1.0,
+        assignment_modes: str | list[str] = "hard_st",
+        assignment_temperatures: float | list[float] = (1.0, 1.0, 1.0, 0.7),
         positive_similarity_scales: bool | list[bool] = False,
-        local_branches: str | list[str] = ("lbpconv", "dwconv", "identity", "identity"),
-        local_ratios: float | list[float] = (0.5, 0.5, 0.0, 0.0),
-        stage_modes: str | list[str] = ("hybrid", "hybrid", "cluster", "cluster"),
-        channel_shuffle: bool | list[bool] = (True, True, False, False),
+        local_branches: str | list[str] = ("lbpconv", "dwconv", "identity", "dwconv"),
+        local_ratios: float | list[float] = (0.5, 0.5, 0.0, 0.25),
+        stage_modes: str | list[str] = ("hybrid", "hybrid", "cluster", "hybrid"),
+        channel_shuffle: bool | list[bool] = (True, True, False, True),
         layer_scale_init_values: float | list[float] = 1e-5,
         norm: str = "bn",
         stem_patch_size: int = 3,
@@ -222,15 +223,32 @@ class HBCCNet(nn.Module):
         self.norm = make_norm(norm, embed_dims[-1])
         self.head = nn.Linear(embed_dims[-1], num_classes)
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_intermediates(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """Return the four post-stage feature maps at 32/16/8/4 resolution."""
+
         x = self.coord(x)
         x = self.stem(x)
+        features: list[torch.Tensor] = []
         for idx, stage in enumerate(self.stages):
             x = stage(x)
+            if idx == len(self.stages) - 1:
+                x = self.norm(x)
+            features.append(x)
             if idx < len(self.downsamples):
                 x = self.downsamples[idx](x)
-        return self.norm(x)
+        return tuple(features)
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward_intermediates(x)[-1]
+
+    def forward_with_features(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        features = self.forward_intermediates(x)
+        logits = self.head(features[-1].mean(dim=(-2, -1)))
+        return logits, features
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.forward_features(x)
-        return self.head(x.mean(dim=(-2, -1)))
+        logits, _ = self.forward_with_features(x)
+        return logits

@@ -1,5 +1,5 @@
 protocol:
-  name: cifar10_ce_noaug_hbcc_wide_v3
+  name: cifar10_ce_noaug_hbcc_accuracy_v4
   purpose: architecture_comparison_ce_only
   dataset: cifar10
   session: baseline

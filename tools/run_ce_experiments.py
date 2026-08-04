@@ -17,7 +17,7 @@ import yaml
 from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
 from lightweight_hbcc.models import build_model
-from lightweight_hbcc.models.hbcc import validate_hbcc_wide_cifar_config
+from lightweight_hbcc.models.hbcc import validate_hbcc_accuracy_cifar_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +29,7 @@ RECIPE_PATHS = {
 }
 DEFAULT_SEEDS = (42,)
 HBCC_MODELS = ("hbcc_small", "hbcc_medium")
+HBCC_ARCHITECTURE = "hbcc_accuracy_stage4_v2"
 _REMOVED_BATCH_AUGMENTATION_KEYS = {"mixup_alpha", "cutmix_alpha", "cutmix_prob"}
 
 
@@ -62,7 +63,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--data-root", default="data")
-    parser.add_argument("--output", default="runs_ce_hbcc_wide")
+    parser.add_argument("--output", default="runs_ce_hbcc_accuracy")
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--print-every", type=int, default=5)
     parser.add_argument("--progress", action="store_true")
@@ -120,7 +121,7 @@ def validate_protocol(
         model_cfg = deepcopy(entry["model"])
         model_cfg["num_classes"] = num_classes
         if name in HBCC_MODELS:
-            errors.extend(validate_hbcc_wide_cifar_config(name, entry["model"]))
+            errors.extend(validate_hbcc_accuracy_cifar_config(name, entry["model"]))
         try:
             model = build_model({"model": model_cfg}).eval()
             with torch.inference_mode():
@@ -167,7 +168,8 @@ def experiment_name(
     seed: int,
     suffix: str = "",
 ) -> str:
-    return f"{dataset}_noaug_{model_name}_seed{seed}_ce{suffix}"
+    architecture_token = "_accuracy_stage4" if model_name in HBCC_MODELS else ""
+    return f"{dataset}_noaug_{model_name}{architecture_token}_seed{seed}_ce{suffix}"
 
 
 def make_effective_config(
@@ -187,6 +189,9 @@ def make_effective_config(
             "experiment": {
                 "name": name,
                 "model_key": model_name,
+                "architecture": (
+                    HBCC_ARCHITECTURE if model_name in HBCC_MODELS else model_name
+                ),
             },
             "protocol": {
                 "name": f"{recipe['protocol']['name']}_ce",
@@ -259,7 +264,7 @@ def completed_run_matches(output_root: Path, expected: dict[str, Any]) -> bool:
     distillation_matches = (
         bool(distillation.get("enabled")) is False
         and distillation.get("method") == "none"
-        and float(distillation.get("alpha", 0.0)) == 0.0
+        and distillation.get("alpha") in {None, 0, 0.0}
     )
     return fields_match and distillation_matches and metrics.get("test_acc1") is not None
 

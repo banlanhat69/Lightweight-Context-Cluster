@@ -17,8 +17,9 @@ import yaml
 
 from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
+from lightweight_hbcc.engine import forward_resnet18_with_features
 from lightweight_hbcc.models import build_model
-from lightweight_hbcc.models.hbcc import validate_hbcc_wide_cifar_config
+from lightweight_hbcc.models.hbcc import validate_hbcc_accuracy_cifar_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,17 +29,17 @@ RECIPE_PATHS = {
     "cifar10": CONFIG_ROOT / "cifar10_no_augmentation.yaml",
     "cifar100": CONFIG_ROOT / "cifar100_no_augmentation.yaml",
 }
-METHODS = ("standard", "dkd")
+METHODS = ("standard", "dkd", "dkd_at")
 TEACHER_MODEL_NAME = "resnet18_cifar"
-HBCC_ARCHITECTURE = "hbcc_wide_stage4_v1"
+HBCC_ARCHITECTURE = "hbcc_accuracy_stage4_v2"
 _REMOVED_BATCH_AUGMENTATION_KEYS = {"mixup_alpha", "cutmix_alpha", "cutmix_prob"}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare standard HBCC KD and HBCC-DKD using a frozen, verified "
-            "no-augmentation ResNet-18 checkpoint."
+            "Compare standard KD, DKD, and DKD with multi-stage attention "
+            "transfer using a frozen, verified no-augmentation ResNet-18 teacher."
         )
     )
     parser.add_argument("--dataset", choices=sorted(RECIPE_PATHS), required=True)
@@ -60,8 +61,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--standard-alpha", type=float, default=0.5)
     parser.add_argument("--dkd-tckd-weight", type=float, default=1.0)
     parser.add_argument("--dkd-nckd-weight", type=float, default=4.0)
+    parser.add_argument("--dkd-scale", type=float, default=0.5)
     parser.add_argument("--dkd-warmup-epochs", type=int, default=20)
-    parser.add_argument("--label-smoothing", type=float)
+    parser.add_argument("--feature-kd-weight", type=float, default=0.25)
+    parser.add_argument("--feature-kd-stages", nargs="+", type=int, default=[2, 3, 4])
+    parser.add_argument("--feature-kd-warmup-epochs", type=int, default=20)
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument("--workers", type=int)
     parser.add_argument(
         "--download-data",
@@ -195,7 +200,18 @@ def resolve_teacher(
     state = checkpoint.get("model", checkpoint)
     teacher.load_state_dict(state, strict=True)
     with torch.inference_mode():
-        output = teacher(torch.randn(1, 3, 32, 32))
+        sample = torch.randn(1, 3, 32, 32)
+        if "dkd_at" in args.methods:
+            output, teacher_features = forward_resnet18_with_features(teacher, sample)
+            expected_spatial = [(32, 32), (16, 16), (8, 8), (4, 4)]
+            actual_spatial = [tuple(feature.shape[-2:]) for feature in teacher_features]
+            if actual_spatial != expected_spatial:
+                raise ValueError(
+                    "Teacher feature resolutions must be 32/16/8/4 for attention "
+                    f"distillation, got {actual_spatial}."
+                )
+        else:
+            output = teacher(sample)
     if output.shape != (1, num_classes):
         raise ValueError(
             f"Teacher output shape must be (1, {num_classes}), got {tuple(output.shape)}"
@@ -231,11 +247,18 @@ def experiment_name(
             f"dkd_t{_number_token(args.temperature)}"
             f"_tckd{_number_token(args.dkd_tckd_weight)}"
             f"_nckd{_number_token(args.dkd_nckd_weight)}"
+            f"_s{_number_token(args.dkd_scale)}"
             f"_w{args.dkd_warmup_epochs}"
         )
+        if method == "dkd_at":
+            stages = "".join(str(stage) for stage in args.feature_kd_stages)
+            method_token += (
+                f"_at{_number_token(args.feature_kd_weight)}"
+                f"_st{stages}_fw{args.feature_kd_warmup_epochs}"
+            )
     smoke_token = "_smoke" if args.smoke else ""
     return (
-        f"{args.dataset}_noaug_{student}_wide_stage4_seed{args.seed}_{method_token}"
+        f"{args.dataset}_noaug_{student}_accuracy_stage4_seed{args.seed}_{method_token}"
         f"_e{epochs}_teacher{teacher_fingerprint}{smoke_token}"
     )
 
@@ -270,9 +293,19 @@ def make_student_config(
             {
                 "dkd_tckd_weight": args.dkd_tckd_weight,
                 "dkd_nckd_weight": args.dkd_nckd_weight,
+                "dkd_scale": args.dkd_scale,
                 "dkd_warmup_epochs": args.dkd_warmup_epochs,
             }
         )
+        if method == "dkd_at":
+            train_patch.update(
+                {
+                    "feature_kd_method": "attention",
+                    "feature_kd_weight": args.feature_kd_weight,
+                    "feature_kd_stages": list(args.feature_kd_stages),
+                    "feature_kd_warmup_epochs": args.feature_kd_warmup_epochs,
+                }
+            )
     patch: dict[str, Any] = {
         "experiment": {
             "name": name,
@@ -282,8 +315,8 @@ def make_student_config(
             "teacher_fingerprint": teacher_fingerprint,
         },
         "protocol": {
-            "name": f"{args.dataset}_hbcc_wide_{method}_noaug_v3",
-            "purpose": "hbcc_wide_standard_kd_vs_dkd_no_augmentation",
+            "name": f"{args.dataset}_hbcc_accuracy_{method}_noaug_v4",
+            "purpose": "hbcc_accuracy_kd_attention_ablation_no_augmentation",
             "session": "kd",
             "augmentation": "none",
             "canonical": False,
@@ -401,8 +434,17 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("DKD weights must be non-negative.")
     if args.dkd_tckd_weight == 0.0 and args.dkd_nckd_weight == 0.0:
         raise ValueError("DKD requires at least one positive weight.")
+    if args.dkd_scale <= 0.0:
+        raise ValueError("--dkd-scale must be positive.")
     if args.dkd_warmup_epochs < 0:
         raise ValueError("--dkd-warmup-epochs must be non-negative.")
+    if args.feature_kd_weight <= 0.0:
+        raise ValueError("--feature-kd-weight must be positive.")
+    _validate_unique("feature KD stage", args.feature_kd_stages)
+    if any(stage < 1 or stage > 4 for stage in args.feature_kd_stages):
+        raise ValueError("--feature-kd-stages values must be in [1, 4].")
+    if args.feature_kd_warmup_epochs < 0:
+        raise ValueError("--feature-kd-warmup-epochs must be non-negative.")
     if args.label_smoothing is not None and not 0.0 <= args.label_smoothing < 1.0:
         raise ValueError("--label-smoothing must be in [0, 1).")
 
@@ -424,26 +466,34 @@ def main(argv: list[str] | None = None) -> None:
     num_classes = 100 if args.dataset == "cifar100" else 10
     architecture_summaries: list[str] = []
     for student in args.students:
-        architecture_errors = validate_hbcc_wide_cifar_config(
+        architecture_errors = validate_hbcc_accuracy_cifar_config(
             student,
             catalog[student]["model"],
         )
         if architecture_errors:
             raise ValueError(
-                "Widened HBCC architecture validation failed:\n- "
+                "Accuracy-oriented HBCC architecture validation failed:\n- "
                 + "\n- ".join(architecture_errors)
             )
         model_cfg = deepcopy(catalog[student]["model"])
         model_cfg["num_classes"] = num_classes
         model = build_model({"model": model_cfg}).eval()
         with torch.inference_mode():
-            output = model(torch.randn(1, 3, 32, 32))
+            output, student_features = model.forward_with_features(
+                torch.randn(1, 3, 32, 32)
+            )
         if output.shape != (1, num_classes):
             raise ValueError(
                 f"{student} output must be (1, {num_classes}), got {tuple(output.shape)}"
             )
+        expected_spatial = [(32, 32), (16, 16), (8, 8), (4, 4)]
+        actual_spatial = [tuple(feature.shape[-2:]) for feature in student_features]
+        if actual_spatial != expected_spatial:
+            raise ValueError(
+                f"{student} feature resolutions must be 32/16/8/4, got {actual_spatial}."
+            )
         architecture_summaries.append(
-            f"{student}:embed_dims={model_cfg['embed_dims']}"
+            f"{student}:embed_dims={model_cfg['embed_dims']}:depths={model_cfg['depths']}"
         )
         del model
 

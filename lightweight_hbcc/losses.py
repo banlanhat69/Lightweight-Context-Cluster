@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 
 
-DISTILLATION_METHODS = ("none", "reverse_kd", "standard", "dkd")
+DISTILLATION_METHODS = ("none", "reverse_kd", "standard", "dkd", "dkd_at")
 
 
 def _collapse_target_and_other(
@@ -26,7 +26,8 @@ class DistillationLoss(nn.Module):
     ``KL(teacher || student)``. ``reverse_kd`` preserves equation (16) from
     ``hbcc.pdf`` for controlled comparison. ``dkd`` implements target-class
     and non-target-class knowledge distillation with an optional linear
-    warmup of the distillation terms.
+    warmup of the distillation terms. ``dkd_at`` adds multi-stage attention
+    transfer without requiring equal teacher/student channel counts.
     """
 
     def __init__(
@@ -37,7 +38,11 @@ class DistillationLoss(nn.Module):
         label_smoothing: float = 0.0,
         dkd_tckd_weight: float = 1.0,
         dkd_nckd_weight: float = 4.0,
+        dkd_scale: float = 1.0,
         dkd_warmup_epochs: int = 20,
+        feature_kd_weight: float = 0.25,
+        feature_kd_stages: list[int] | tuple[int, ...] = (2, 3, 4),
+        feature_kd_warmup_epochs: int = 20,
     ) -> None:
         super().__init__()
         self.method = str(method).lower()
@@ -46,8 +51,13 @@ class DistillationLoss(nn.Module):
         self.label_smoothing = float(label_smoothing)
         self.dkd_tckd_weight = float(dkd_tckd_weight)
         self.dkd_nckd_weight = float(dkd_nckd_weight)
+        self.dkd_scale = float(dkd_scale)
         self.dkd_warmup_epochs = int(dkd_warmup_epochs)
+        self.feature_kd_weight = float(feature_kd_weight)
+        self.feature_kd_stages = tuple(int(stage) for stage in feature_kd_stages)
+        self.feature_kd_warmup_epochs = int(feature_kd_warmup_epochs)
         self.epoch = 0
+        self.last_components: dict[str, torch.Tensor] = {}
 
         if self.method not in DISTILLATION_METHODS:
             raise ValueError(
@@ -64,15 +74,83 @@ class DistillationLoss(nn.Module):
             )
         if self.dkd_tckd_weight < 0.0 or self.dkd_nckd_weight < 0.0:
             raise ValueError("DKD weights must be non-negative.")
-        if self.method == "dkd" and (
+        if self.method in {"dkd", "dkd_at"} and (
             self.dkd_tckd_weight == 0.0 and self.dkd_nckd_weight == 0.0
         ):
             raise ValueError("DKD requires at least one positive distillation weight.")
+        if self.dkd_scale < 0.0:
+            raise ValueError("dkd_scale must be non-negative.")
+        if self.method in {"dkd", "dkd_at"} and self.dkd_scale == 0.0:
+            raise ValueError("DKD requires dkd_scale > 0.")
         if self.dkd_warmup_epochs < 0:
             raise ValueError("dkd_warmup_epochs must be non-negative.")
+        if not self.feature_kd_stages:
+            raise ValueError("feature_kd_stages must contain at least one stage.")
+        if len(self.feature_kd_stages) != len(set(self.feature_kd_stages)):
+            raise ValueError("feature_kd_stages must not contain duplicates.")
+        if any(stage < 1 or stage > 4 for stage in self.feature_kd_stages):
+            raise ValueError("feature_kd_stages must be in the inclusive range [1, 4].")
+        if self.feature_kd_weight < 0.0:
+            raise ValueError("feature_kd_weight must be non-negative.")
+        if self.method == "dkd_at" and self.feature_kd_weight == 0.0:
+            raise ValueError("dkd_at requires feature_kd_weight > 0.")
+        if self.feature_kd_warmup_epochs < 0:
+            raise ValueError("feature_kd_warmup_epochs must be non-negative.")
+
+    @property
+    def requires_feature_distillation(self) -> bool:
+        return self.method == "dkd_at"
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = int(epoch)
+
+    def _warmup(self, epochs: int) -> float:
+        if epochs == 0:
+            return 1.0
+        return min((self.epoch + 1) / epochs, 1.0)
+
+    @staticmethod
+    def _attention_map(feature: torch.Tensor) -> torch.Tensor:
+        if feature.ndim != 4:
+            raise ValueError(
+                "Attention transfer expects NCHW feature maps, got "
+                f"shape {tuple(feature.shape)}."
+            )
+        attention = feature.float().pow(2).sum(dim=1).flatten(1)
+        return F.normalize(attention, p=2, dim=1, eps=1e-12)
+
+    def _attention_transfer(
+        self,
+        student_features: tuple[torch.Tensor, ...] | list[torch.Tensor],
+        teacher_features: tuple[torch.Tensor, ...] | list[torch.Tensor],
+    ) -> torch.Tensor:
+        if len(student_features) < 4 or len(teacher_features) < 4:
+            raise ValueError(
+                "Multi-stage attention transfer requires four teacher and student features."
+            )
+        stage_losses: list[torch.Tensor] = []
+        for stage in self.feature_kd_stages:
+            student_feature = student_features[stage - 1]
+            teacher_feature = teacher_features[stage - 1].detach()
+            if student_feature.shape[0] != teacher_feature.shape[0]:
+                raise ValueError(f"Feature batch mismatch at stage {stage}.")
+            if student_feature.shape[-2:] != teacher_feature.shape[-2:]:
+                raise ValueError(
+                    f"Feature spatial mismatch at stage {stage}: "
+                    f"student={tuple(student_feature.shape[-2:])}, "
+                    f"teacher={tuple(teacher_feature.shape[-2:])}."
+                )
+            student_attention = self._attention_map(student_feature)
+            teacher_attention = self._attention_map(teacher_feature)
+            stage_losses.append(
+                (student_attention - teacher_attention).pow(2).sum(dim=1).mean()
+            )
+        return torch.stack(stage_losses).mean()
+
+    def _record(self, **components: torch.Tensor) -> None:
+        self.last_components = {
+            name: value.detach() for name, value in components.items()
+        }
 
     def _standard_kd(
         self,
@@ -146,6 +224,8 @@ class DistillationLoss(nn.Module):
         student_logits: torch.Tensor,
         target: torch.Tensor,
         teacher_logits: torch.Tensor | None = None,
+        student_features: tuple[torch.Tensor, ...] | list[torch.Tensor] | None = None,
+        teacher_features: tuple[torch.Tensor, ...] | list[torch.Tensor] | None = None,
     ) -> torch.Tensor:
         if target.ndim != 1:
             raise ValueError("No-augmentation training requires one hard class label per sample.")
@@ -159,6 +239,7 @@ class DistillationLoss(nn.Module):
                 raise ValueError(
                     f"distillation method {self.method!r} requires teacher logits."
                 )
+            self._record(ce=ce)
             return ce
         if self.method == "none":
             raise ValueError("Teacher logits were provided while distillation method is 'none'.")
@@ -170,17 +251,28 @@ class DistillationLoss(nn.Module):
 
         if self.method == "standard":
             kd = self._standard_kd(student_logits, teacher_logits)
-            return (1.0 - self.alpha) * ce + self.alpha * kd
+            total = (1.0 - self.alpha) * ce + self.alpha * kd
+            self._record(ce=ce, kd=kd)
+            return total
         if self.method == "reverse_kd":
             kd = self._reverse_kd(student_logits, teacher_logits)
-            return (1.0 - self.alpha) * ce + self.alpha * kd
+            total = (1.0 - self.alpha) * ce + self.alpha * kd
+            self._record(ce=ce, kd=kd)
+            return total
 
         tckd, nckd = self._dkd(student_logits, teacher_logits, target)
-        if self.dkd_warmup_epochs == 0:
-            warmup = 1.0
-        else:
-            warmup = min((self.epoch + 1) / self.dkd_warmup_epochs, 1.0)
-        return ce + warmup * (
-            self.dkd_tckd_weight * tckd
-            + self.dkd_nckd_weight * nckd
-        )
+        dkd = self.dkd_tckd_weight * tckd + self.dkd_nckd_weight * nckd
+        total = ce + self.dkd_scale * self._warmup(self.dkd_warmup_epochs) * dkd
+        components = {"ce": ce, "tckd": tckd, "nckd": nckd, "dkd": dkd}
+        if self.method == "dkd_at":
+            if student_features is None or teacher_features is None:
+                raise ValueError("dkd_at requires teacher and student feature maps.")
+            attention = self._attention_transfer(student_features, teacher_features)
+            total = total + (
+                self.feature_kd_weight
+                * self._warmup(self.feature_kd_warmup_epochs)
+                * attention
+            )
+            components["attention"] = attention
+        self._record(**components)
+        return total

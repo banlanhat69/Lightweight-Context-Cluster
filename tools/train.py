@@ -99,21 +99,44 @@ def validate_training_mode(
     model_name = str(cfg.get("model", {}).get("name", ""))
     if has_teacher:
         kd_method = str(train_cfg.get("kd_method", "reverse_kd")).lower()
-        if kd_method not in {"standard", "reverse_kd", "dkd"}:
+        if kd_method not in {"standard", "reverse_kd", "dkd", "dkd_at"}:
             raise ValueError(
-                "HBCC distillation method must be 'standard', 'reverse_kd', or 'dkd'."
+                "HBCC distillation method must be 'standard', 'reverse_kd', "
+                "'dkd', or 'dkd_at'."
             )
         if model_name != "hbcc":
             raise ValueError("Knowledge distillation is supported only for HBCC students.")
         if kd_method in {"standard", "reverse_kd"} and kd_alpha <= 0.0:
             raise ValueError(f"{kd_method} requires train.kd_alpha > 0.")
-        if kd_method == "dkd":
+        if kd_method in {"dkd", "dkd_at"}:
             tckd_weight = float(train_cfg.get("dkd_tckd_weight", 1.0))
             nckd_weight = float(train_cfg.get("dkd_nckd_weight", 4.0))
+            dkd_scale = float(train_cfg.get("dkd_scale", 1.0))
             if tckd_weight < 0.0 or nckd_weight < 0.0:
                 raise ValueError("DKD weights must be non-negative.")
             if tckd_weight == 0.0 and nckd_weight == 0.0:
                 raise ValueError("DKD requires at least one positive weight.")
+            if dkd_scale <= 0.0:
+                raise ValueError("DKD requires train.dkd_scale > 0.")
+        if kd_method == "dkd_at":
+            feature_method = str(
+                train_cfg.get("feature_kd_method", "attention")
+            ).lower()
+            feature_weight = float(train_cfg.get("feature_kd_weight", 0.25))
+            feature_stages = [
+                int(stage) for stage in train_cfg.get("feature_kd_stages", [2, 3, 4])
+            ]
+            feature_warmup = int(train_cfg.get("feature_kd_warmup_epochs", 20))
+            if feature_method != "attention":
+                raise ValueError("dkd_at requires train.feature_kd_method=attention.")
+            if feature_weight <= 0.0:
+                raise ValueError("dkd_at requires train.feature_kd_weight > 0.")
+            if not feature_stages or len(feature_stages) != len(set(feature_stages)):
+                raise ValueError("feature_kd_stages must be non-empty and unique.")
+            if any(stage < 1 or stage > 4 for stage in feature_stages):
+                raise ValueError("feature_kd_stages values must be in [1, 4].")
+            if feature_warmup < 0:
+                raise ValueError("feature_kd_warmup_epochs must be non-negative.")
         if session and session != "kd":
             raise ValueError("A teacher checkpoint is valid only for protocol.session=kd.")
     else:
@@ -186,6 +209,7 @@ def main() -> None:
         "standard": "teacher||student",
         "reverse_kd": "student||teacher",
         "dkd": "decoupled_teacher||student",
+        "dkd_at": "decoupled_teacher||student+multi_stage_attention",
     }.get(kd_method)
     cfg["distillation"] = {
         "enabled": has_teacher,
@@ -201,13 +225,40 @@ def main() -> None:
         "temperature": float(train_cfg.get("kd_temperature", 4.0)),
         "kl_direction": kl_direction if has_teacher else None,
         "dkd_tckd_weight": (
-            float(train_cfg.get("dkd_tckd_weight", 1.0)) if kd_method == "dkd" else None
+            float(train_cfg.get("dkd_tckd_weight", 1.0))
+            if kd_method in {"dkd", "dkd_at"}
+            else None
         ),
         "dkd_nckd_weight": (
-            float(train_cfg.get("dkd_nckd_weight", 4.0)) if kd_method == "dkd" else None
+            float(train_cfg.get("dkd_nckd_weight", 4.0))
+            if kd_method in {"dkd", "dkd_at"}
+            else None
+        ),
+        "dkd_scale": (
+            float(train_cfg.get("dkd_scale", 1.0))
+            if kd_method in {"dkd", "dkd_at"}
+            else None
         ),
         "dkd_warmup_epochs": (
-            int(train_cfg.get("dkd_warmup_epochs", 20)) if kd_method == "dkd" else None
+            int(train_cfg.get("dkd_warmup_epochs", 20))
+            if kd_method in {"dkd", "dkd_at"}
+            else None
+        ),
+        "feature_kd_method": "attention" if kd_method == "dkd_at" else None,
+        "feature_kd_weight": (
+            float(train_cfg.get("feature_kd_weight", 0.25))
+            if kd_method == "dkd_at"
+            else None
+        ),
+        "feature_kd_stages": (
+            [int(stage) for stage in train_cfg.get("feature_kd_stages", [2, 3, 4])]
+            if kd_method == "dkd_at"
+            else None
+        ),
+        "feature_kd_warmup_epochs": (
+            int(train_cfg.get("feature_kd_warmup_epochs", 20))
+            if kd_method == "dkd_at"
+            else None
         ),
     }
     seed_everything(seed, deterministic=deterministic)
@@ -301,7 +352,15 @@ def main() -> None:
         label_smoothing=float(train_cfg.get("label_smoothing", 0.0)),
         dkd_tckd_weight=float(train_cfg.get("dkd_tckd_weight", 1.0)),
         dkd_nckd_weight=float(train_cfg.get("dkd_nckd_weight", 4.0)),
+        dkd_scale=float(train_cfg.get("dkd_scale", 1.0)),
         dkd_warmup_epochs=int(train_cfg.get("dkd_warmup_epochs", 20)),
+        feature_kd_weight=float(train_cfg.get("feature_kd_weight", 0.25)),
+        feature_kd_stages=[
+            int(stage) for stage in train_cfg.get("feature_kd_stages", [2, 3, 4])
+        ],
+        feature_kd_warmup_epochs=int(
+            train_cfg.get("feature_kd_warmup_epochs", 20)
+        ),
     )
     amp = bool(train_cfg.get("amp", True))
     scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
@@ -360,6 +419,17 @@ def main() -> None:
                 )
                 if "val_acc5" in record:
                     line += " val_acc5={val_acc5:.2f}".format(**record)
+                for metric_name in (
+                    "train_ce_loss",
+                    "train_kd_loss",
+                    "train_tckd_loss",
+                    "train_nckd_loss",
+                    "train_dkd_loss",
+                    "train_attention_loss",
+                ):
+                    if metric_name in record:
+                        label = metric_name.removeprefix("train_").removesuffix("_loss")
+                        line += f" {label}={record[metric_name]:.4f}"
                 print(line)
             else:
                 print(json.dumps(record, indent=2))

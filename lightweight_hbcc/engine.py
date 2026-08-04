@@ -59,6 +59,43 @@ def load_checkpoint(model: nn.Module, path: str | Path, device: torch.device, st
     return ckpt
 
 
+def forward_resnet18_with_features(
+    model: nn.Module,
+    images: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    """Run torchvision ResNet-18 and expose layer1..layer4 feature maps."""
+
+    required = (
+        "conv1",
+        "bn1",
+        "relu",
+        "maxpool",
+        "layer1",
+        "layer2",
+        "layer3",
+        "layer4",
+        "avgpool",
+        "fc",
+    )
+    missing = [name for name in required if not hasattr(model, name)]
+    if missing:
+        raise TypeError(
+            "Feature distillation requires a torchvision-style ResNet teacher; "
+            f"missing attributes: {missing}."
+        )
+    x = model.conv1(images)
+    x = model.bn1(x)
+    x = model.relu(x)
+    x = model.maxpool(x)
+    feature1 = model.layer1(x)
+    feature2 = model.layer2(feature1)
+    feature3 = model.layer3(feature2)
+    feature4 = model.layer4(feature3)
+    pooled = model.avgpool(feature4)
+    logits = model.fc(torch.flatten(pooled, 1))
+    return logits, (feature1, feature2, feature3, feature4)
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: torch.utils.data.DataLoader,
@@ -80,6 +117,7 @@ def train_one_epoch(
         scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
     loss_meter = AverageMeter()
     acc_meter = AverageMeter()
+    component_meters: dict[str, AverageMeter] = {}
     start = time.perf_counter()
     pbar = tqdm(
         loader,
@@ -97,20 +135,63 @@ def train_one_epoch(
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
-        with torch.no_grad():
-            teacher_logits = teacher(images) if teacher is not None else None
+        teacher_features = None
+        with torch.no_grad(), autocast(
+            device_type=device.type,
+            enabled=amp and device.type == "cuda",
+        ):
+            if teacher is None:
+                teacher_logits = None
+            elif criterion.requires_feature_distillation:
+                teacher_logits, teacher_features = forward_resnet18_with_features(
+                    teacher,
+                    images,
+                )
+            else:
+                teacher_logits = teacher(images)
         with autocast(device_type=device.type, enabled=amp and device.type == "cuda"):
-            output = model(images)
-            loss = criterion(output, target, teacher_logits)
+            if criterion.requires_feature_distillation:
+                if not hasattr(model, "forward_with_features"):
+                    raise TypeError(
+                        "Feature distillation requires student.forward_with_features()."
+                    )
+                output, student_features = model.forward_with_features(images)
+            else:
+                output = model(images)
+                student_features = None
+            loss = criterion(
+                output,
+                target,
+                teacher_logits,
+                student_features=student_features,
+                teacher_features=teacher_features,
+            )
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
         acc1 = accuracy(output.detach(), target, (1,))[0].item()
         loss_meter.update(loss.item(), images.size(0))
         acc_meter.update(acc1, images.size(0))
+        component_names = list(criterion.last_components)
+        component_values = torch.stack(
+            [criterion.last_components[name].float() for name in component_names]
+        ).cpu().tolist()
+        for name, value in zip(component_names, component_values, strict=True):
+            component_meters.setdefault(name, AverageMeter()).update(
+                value,
+                images.size(0),
+            )
         if progress:
             pbar.set_postfix(loss=f"{loss_meter.avg:.4f}", acc1=f"{acc_meter.avg:.2f}")
-    return {"train_loss": loss_meter.avg, "train_acc1": acc_meter.avg, "train_time_s": time.perf_counter() - start}
+    metrics = {
+        "train_loss": loss_meter.avg,
+        "train_acc1": acc_meter.avg,
+        "train_time_s": time.perf_counter() - start,
+    }
+    metrics.update(
+        {f"train_{name}_loss": meter.avg for name, meter in component_meters.items()}
+    )
+    return metrics
 
 
 @torch.no_grad()
