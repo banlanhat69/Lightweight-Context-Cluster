@@ -19,7 +19,7 @@ from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
 from lightweight_hbcc.engine import forward_resnet18_with_features
 from lightweight_hbcc.models import build_model
-from lightweight_hbcc.models.hbcc import validate_hbcc_accuracy_cifar_config
+from lightweight_hbcc.models.hbcc import validate_hbcc_wide_cifar_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +31,7 @@ RECIPE_PATHS = {
 }
 METHODS = ("standard", "dkd", "dkd_at")
 TEACHER_MODEL_NAME = "resnet18_cifar"
-HBCC_ARCHITECTURE = "hbcc_accuracy_stage4_v2"
+HBCC_ARCHITECTURE = "hbcc_wide_stage4_v1"
 _REMOVED_BATCH_AUGMENTATION_KEYS = {"mixup_alpha", "cutmix_alpha", "cutmix_prob"}
 
 
@@ -258,7 +258,7 @@ def experiment_name(
             )
     smoke_token = "_smoke" if args.smoke else ""
     return (
-        f"{args.dataset}_noaug_{student}_accuracy_stage4_seed{args.seed}_{method_token}"
+        f"{args.dataset}_noaug_{student}_wide_stage4_v1_seed{args.seed}_{method_token}"
         f"_e{epochs}_teacher{teacher_fingerprint}{smoke_token}"
     )
 
@@ -315,8 +315,8 @@ def make_student_config(
             "teacher_fingerprint": teacher_fingerprint,
         },
         "protocol": {
-            "name": f"{args.dataset}_hbcc_accuracy_{method}_noaug_v4",
-            "purpose": "hbcc_accuracy_kd_attention_ablation_no_augmentation",
+            "name": f"{args.dataset}_hbcc_wide_{method}_noaug_v5",
+            "purpose": "hbcc_wide_v1_kd_attention_ablation_no_augmentation",
             "session": "kd",
             "augmentation": "none",
             "canonical": False,
@@ -466,13 +466,13 @@ def main(argv: list[str] | None = None) -> None:
     num_classes = 100 if args.dataset == "cifar100" else 10
     architecture_summaries: list[str] = []
     for student in args.students:
-        architecture_errors = validate_hbcc_accuracy_cifar_config(
+        architecture_errors = validate_hbcc_wide_cifar_config(
             student,
             catalog[student]["model"],
         )
         if architecture_errors:
             raise ValueError(
-                "Accuracy-oriented HBCC architecture validation failed:\n- "
+                "Restored HBCC-Wide architecture validation failed:\n- "
                 + "\n- ".join(architecture_errors)
             )
         model_cfg = deepcopy(catalog[student]["model"])

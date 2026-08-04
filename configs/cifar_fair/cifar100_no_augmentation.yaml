@@ -1,5 +1,5 @@
 protocol:
-  name: cifar100_ce_noaug_hbcc_accuracy_v4
+  name: cifar100_ce_noaug_hbcc_stage4_ablation_v6
   purpose: architecture_comparison_ce_only
   dataset: cifar100
   session: baseline

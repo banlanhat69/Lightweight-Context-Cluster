@@ -17,7 +17,10 @@ import yaml
 from lightweight_hbcc.config import deep_update, load_config, save_config
 from lightweight_hbcc.data import validate_no_augmentation_config
 from lightweight_hbcc.models import build_model
-from lightweight_hbcc.models.hbcc import validate_hbcc_accuracy_cifar_config
+from lightweight_hbcc.models.hbcc import (
+    validate_hbcc_stage4_ablation_config,
+    validate_hbcc_wide_cifar_config,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,8 +31,14 @@ RECIPE_PATHS = {
     "cifar100": CONFIG_ROOT / "cifar100_no_augmentation.yaml",
 }
 DEFAULT_SEEDS = (42,)
-HBCC_MODELS = ("hbcc_small", "hbcc_medium")
-HBCC_ARCHITECTURE = "hbcc_accuracy_stage4_v2"
+HBCC_BASELINE_MODELS = ("hbcc_small", "hbcc_medium")
+HBCC_STAGE4_ABLATION_MODELS = ("hbcc_medium_stage4_ablation",)
+HBCC_MODELS = HBCC_BASELINE_MODELS + HBCC_STAGE4_ABLATION_MODELS
+HBCC_ARCHITECTURES = {
+    "hbcc_small": "hbcc_wide_stage4_v1",
+    "hbcc_medium": "hbcc_wide_stage4_v1",
+    "hbcc_medium_stage4_ablation": "hbcc_medium_stage4_ablation_v1",
+}
 _REMOVED_BATCH_AUGMENTATION_KEYS = {"mixup_alpha", "cutmix_alpha", "cutmix_prob"}
 
 
@@ -63,7 +72,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--data-root", default="data")
-    parser.add_argument("--output", default="runs_ce_hbcc_accuracy")
+    parser.add_argument("--output", default="runs_ce_hbcc_stage4_ablation")
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--print-every", type=int, default=5)
     parser.add_argument("--progress", action="store_true")
@@ -120,8 +129,10 @@ def validate_protocol(
         entry = catalog[name]
         model_cfg = deepcopy(entry["model"])
         model_cfg["num_classes"] = num_classes
-        if name in HBCC_MODELS:
-            errors.extend(validate_hbcc_accuracy_cifar_config(name, entry["model"]))
+        if name in HBCC_BASELINE_MODELS:
+            errors.extend(validate_hbcc_wide_cifar_config(name, entry["model"]))
+        elif name in HBCC_STAGE4_ABLATION_MODELS:
+            errors.extend(validate_hbcc_stage4_ablation_config(name, entry["model"]))
         try:
             model = build_model({"model": model_cfg}).eval()
             with torch.inference_mode():
@@ -168,7 +179,9 @@ def experiment_name(
     seed: int,
     suffix: str = "",
 ) -> str:
-    architecture_token = "_accuracy_stage4" if model_name in HBCC_MODELS else ""
+    architecture_token = (
+        f"_{HBCC_ARCHITECTURES[model_name]}" if model_name in HBCC_MODELS else ""
+    )
     return f"{dataset}_noaug_{model_name}{architecture_token}_seed{seed}_ce{suffix}"
 
 
@@ -190,7 +203,9 @@ def make_effective_config(
                 "name": name,
                 "model_key": model_name,
                 "architecture": (
-                    HBCC_ARCHITECTURE if model_name in HBCC_MODELS else model_name
+                    HBCC_ARCHITECTURES[model_name]
+                    if model_name in HBCC_MODELS
+                    else model_name
                 ),
             },
             "protocol": {

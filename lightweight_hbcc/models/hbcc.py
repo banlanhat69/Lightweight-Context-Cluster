@@ -9,25 +9,25 @@ from .cluster import Stage
 from .layers import CoordinateAugment, PointReducer, make_norm
 
 
-HBCC_ACCURACY_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
+HBCC_WIDE_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
     "hbcc_small": {
         "name": "hbcc",
         "use_coord": True,
         "embed_dims": [48, 80, 160, 256],
-        "depths": [1, 1, 2, 2],
+        "depths": [1, 1, 2, 1],
         "mlp_ratios": 3.0,
         "heads": [2, 2, 4, 4],
         "head_dim": [16, 16, 16, 16],
-        "proposals": [[2, 2], [2, 2], [2, 2], [2, 2]],
+        "proposals": [[2, 2], [2, 2], [2, 2], [1, 1]],
         "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
         "similarities": ["cosine", "cosine", "cosine", "cosine"],
-        "assignment_modes": ["hard_st", "hard_st", "hard_st", "hard_st"],
-        "assignment_temperatures": [1.0, 1.0, 1.0, 0.7],
+        "assignment_modes": ["hard", "hard", "hard", "hard"],
+        "assignment_temperatures": [1.0, 1.0, 1.0, 1.0],
         "positive_similarity_scales": [False, False, False, False],
-        "stage_modes": ["hybrid", "hybrid", "cluster", "hybrid"],
-        "local_branches": ["lbpconv", "dwconv", "identity", "dwconv"],
-        "local_ratios": [0.5, 0.5, 0.0, 0.25],
-        "channel_shuffle": [True, True, False, True],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.0],
+        "channel_shuffle": [True, True, False, False],
         "layer_scale_init_values": 1.0e-5,
         "norm": "bn",
         "stem_patch_size": 3,
@@ -43,6 +43,39 @@ HBCC_ACCURACY_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
         "name": "hbcc",
         "use_coord": True,
         "embed_dims": [64, 96, 192, 288],
+        "depths": [1, 1, 2, 1],
+        "mlp_ratios": 3.0,
+        "heads": [2, 3, 4, 4],
+        "head_dim": [16, 16, 16, 16],
+        "proposals": [[2, 2], [2, 2], [2, 2], [1, 1]],
+        "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
+        "similarities": ["cosine", "cosine", "cosine", "cosine"],
+        "assignment_modes": ["hard", "hard", "hard", "hard"],
+        "assignment_temperatures": [1.0, 1.0, 1.0, 1.0],
+        "positive_similarity_scales": [False, False, False, False],
+        "stage_modes": ["hybrid", "hybrid", "cluster", "cluster"],
+        "local_branches": ["lbpconv", "dwconv", "identity", "identity"],
+        "local_ratios": [0.5, 0.5, 0.0, 0.0],
+        "channel_shuffle": [True, True, False, False],
+        "layer_scale_init_values": 1.0e-5,
+        "norm": "bn",
+        "stem_patch_size": 3,
+        "stem_stride": 1,
+        "stem_padding": 1,
+        "down_patch_size": 3,
+        "down_stride": 2,
+        "down_padding": 1,
+        "drop_rate": 0.0,
+        "drop_path_rate": 0.08,
+    },
+}
+
+
+HBCC_STAGE4_ABLATION_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
+    "hbcc_medium_stage4_ablation": {
+        "name": "hbcc",
+        "use_coord": True,
+        "embed_dims": [64, 96, 192, 288],
         "depths": [1, 1, 2, 2],
         "mlp_ratios": 3.0,
         "heads": [2, 3, 4, 4],
@@ -50,7 +83,7 @@ HBCC_ACCURACY_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
         "proposals": [[2, 2], [2, 2], [2, 2], [2, 2]],
         "folds": [[4, 4], [2, 2], [1, 1], [1, 1]],
         "similarities": ["cosine", "cosine", "cosine", "cosine"],
-        "assignment_modes": ["hard_st", "hard_st", "hard_st", "hard_st"],
+        "assignment_modes": ["hard", "hard", "hard", "hard_st"],
         "assignment_temperatures": [1.0, 1.0, 1.0, 0.7],
         "positive_similarity_scales": [False, False, False, False],
         "stage_modes": ["hybrid", "hybrid", "cluster", "hybrid"],
@@ -67,21 +100,70 @@ HBCC_ACCURACY_CIFAR_CONFIGS: dict[str, dict[str, Any]] = {
         "down_padding": 1,
         "drop_rate": 0.0,
         "drop_path_rate": 0.08,
+        # Preserve the best CE model's Stage 1-3 stochastic-depth schedule.
+        "stage_drop_path_rates": [[0.0], [0.02], [0.04, 0.06], [0.08, 0.08]],
     },
 }
 
 
-def validate_hbcc_accuracy_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
-    """Return catalog drift errors for the accuracy-oriented HBCC variants."""
+_STAGE_INDEXED_ABLATION_FIELDS = (
+    "depths",
+    "proposals",
+    "assignment_modes",
+    "assignment_temperatures",
+    "stage_modes",
+    "local_branches",
+    "local_ratios",
+    "channel_shuffle",
+)
 
-    expected = HBCC_ACCURACY_CIFAR_CONFIGS.get(model_key)
+
+def validate_hbcc_wide_cifar_config(model_key: str, config: dict[str, Any]) -> list[str]:
+    """Return catalog drift errors for the restored widened-Stage-4 variants."""
+
+    expected = HBCC_WIDE_CIFAR_CONFIGS.get(model_key)
     if expected is None:
-        return [f"unknown accuracy-oriented HBCC variant: {model_key}"]
+        return [f"unknown widened HBCC variant: {model_key}"]
     return [
         f"{model_key}.{field} must be {value!r}, got {config.get(field)!r}"
         for field, value in expected.items()
         if config.get(field) != value
     ]
+
+
+def validate_hbcc_stage4_ablation_config(
+    model_key: str,
+    config: dict[str, Any],
+) -> list[str]:
+    """Validate the Stage-4-only ablation and guard Stage 1-3 from drift."""
+
+    expected = HBCC_STAGE4_ABLATION_CIFAR_CONFIGS.get(model_key)
+    if expected is None:
+        return [f"unknown HBCC Stage 4 ablation variant: {model_key}"]
+
+    errors = [
+        f"{model_key}.{field} must be {value!r}, got {config.get(field)!r}"
+        for field, value in expected.items()
+        if config.get(field) != value
+    ]
+    baseline = HBCC_WIDE_CIFAR_CONFIGS["hbcc_medium"]
+    for field in _STAGE_INDEXED_ABLATION_FIELDS:
+        actual = config.get(field)
+        if not isinstance(actual, (list, tuple)) or list(actual[:3]) != list(
+            baseline[field][:3]
+        ):
+            errors.append(
+                f"{model_key}.{field} Stage 1-3 must remain exactly "
+                f"{baseline[field][:3]!r}, got {actual!r}"
+            )
+    for field, value in baseline.items():
+        if field not in _STAGE_INDEXED_ABLATION_FIELDS:
+            if config.get(field) != value:
+                errors.append(
+                    f"{model_key}.{field} is outside Stage 4 and must remain "
+                    f"{value!r}, got {config.get(field)!r}"
+                )
+    return errors
 
 
 def _as_list(value: Any, length: int) -> list[Any]:
@@ -101,12 +183,11 @@ def _tuple2(value: Any) -> tuple[int, int]:
 
 
 class HBCCNet(nn.Module):
-    """Accuracy-oriented CIFAR HBCC with an information-preserving Stage 4.
+    """CIFAR HBCC matching the best observed no-augmentation CE architecture.
 
     The stem keeps the 32x32 CIFAR resolution and the stages operate at
-    32/16/8/4. Stage 4 uses four proposals, a 25% depthwise-convolution branch,
-    straight-through hard assignment, and two blocks to avoid a one-center
-    bottleneck before global pooling.
+    32/16/8/4. Stage 4 has one pure-cluster block and one global proposal,
+    with 256 output features for Small and 288 for Medium.
     """
 
     def __init__(
@@ -115,20 +196,20 @@ class HBCCNet(nn.Module):
         in_chans: int = 3,
         use_coord: bool = True,
         embed_dims: list[int] | tuple[int, int, int, int] = (48, 80, 160, 256),
-        depths: list[int] | tuple[int, int, int, int] = (1, 1, 2, 2),
+        depths: list[int] | tuple[int, int, int, int] = (1, 1, 2, 1),
         mlp_ratios: float | list[float] = 3.0,
         heads: list[int] | tuple[int, int, int, int] = (2, 2, 4, 4),
         head_dim: int | list[int] = 16,
-        proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (2, 2)),
+        proposals: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((2, 2), (2, 2), (2, 2), (1, 1)),
         folds: list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((4, 4), (2, 2), (1, 1), (1, 1)),
         similarities: str | list[str] = "cosine",
-        assignment_modes: str | list[str] = "hard_st",
-        assignment_temperatures: float | list[float] = (1.0, 1.0, 1.0, 0.7),
+        assignment_modes: str | list[str] = "hard",
+        assignment_temperatures: float | list[float] = 1.0,
         positive_similarity_scales: bool | list[bool] = False,
-        local_branches: str | list[str] = ("lbpconv", "dwconv", "identity", "dwconv"),
-        local_ratios: float | list[float] = (0.5, 0.5, 0.0, 0.25),
-        stage_modes: str | list[str] = ("hybrid", "hybrid", "cluster", "hybrid"),
-        channel_shuffle: bool | list[bool] = (True, True, False, True),
+        local_branches: str | list[str] = ("lbpconv", "dwconv", "identity", "identity"),
+        local_ratios: float | list[float] = (0.5, 0.5, 0.0, 0.0),
+        stage_modes: str | list[str] = ("hybrid", "hybrid", "cluster", "cluster"),
+        channel_shuffle: bool | list[bool] = (True, True, False, False),
         layer_scale_init_values: float | list[float] = 1e-5,
         norm: str = "bn",
         stem_patch_size: int = 3,
@@ -139,6 +220,7 @@ class HBCCNet(nn.Module):
         down_padding: int | list[int] | tuple[int, int, int] = 1,
         drop_rate: float = 0.0,
         drop_path_rate: float = 0.05,
+        stage_drop_path_rates: list[list[float]] | tuple[tuple[float, ...], ...] | None = None,
     ) -> None:
         super().__init__()
         if len(embed_dims) != 4 or len(depths) != 4:
@@ -178,14 +260,39 @@ class HBCCNet(nn.Module):
             raise ValueError(f"down_padding values must be non-negative, got {down_paddings}")
         self.down_strides = down_strides
 
-        total_depth = sum(depths)
-        dpr = torch.linspace(0, drop_path_rate, total_depth).tolist() if total_depth > 0 else []
-        cursor = 0
+        if stage_drop_path_rates is None:
+            total_depth = sum(depths)
+            flat_dpr = (
+                torch.linspace(0, drop_path_rate, total_depth).tolist()
+                if total_depth > 0
+                else []
+            )
+            stage_dpr: list[list[float]] = []
+            cursor = 0
+            for depth in depths:
+                stage_dpr.append(flat_dpr[cursor : cursor + depth])
+                cursor += depth
+        else:
+            if len(stage_drop_path_rates) != 4:
+                raise ValueError("stage_drop_path_rates must contain four stage lists.")
+            stage_dpr = [
+                torch.tensor(list(map(float, rates)), dtype=torch.float32).tolist()
+                for rates in stage_drop_path_rates
+            ]
+            for idx, (rates, depth) in enumerate(zip(stage_dpr, depths, strict=True)):
+                if len(rates) != depth:
+                    raise ValueError(
+                        f"stage_drop_path_rates[{idx}] must contain {depth} values, "
+                        f"got {len(rates)}."
+                    )
+                if any(rate < 0.0 or rate >= 1.0 for rate in rates):
+                    raise ValueError(
+                        f"stage_drop_path_rates[{idx}] values must be in [0, 1)."
+                    )
         self.stages = nn.ModuleList()
         self.downsamples = nn.ModuleList()
         for idx in range(4):
-            rates = dpr[cursor : cursor + depths[idx]]
-            cursor += depths[idx]
+            rates = stage_dpr[idx]
             self.stages.append(
                 Stage(
                     dim=embed_dims[idx],

@@ -37,26 +37,26 @@ models:
       drop_path_rate: 0.05
 
   hbcc_small:
-    display_name: HBCC-Small-Accuracy
+    display_name: HBCC-Small-Wide
     kd_student: true
     model:
       name: hbcc
       use_coord: true
       embed_dims: [48, 80, 160, 256]
-      depths: [1, 1, 2, 2]
+      depths: [1, 1, 2, 1]
       mlp_ratios: 3.0
       heads: [2, 2, 4, 4]
       head_dim: [16, 16, 16, 16]
-      proposals: [[2, 2], [2, 2], [2, 2], [2, 2]]
+      proposals: [[2, 2], [2, 2], [2, 2], [1, 1]]
       folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
       similarities: [cosine, cosine, cosine, cosine]
-      assignment_modes: [hard_st, hard_st, hard_st, hard_st]
-      assignment_temperatures: [1.0, 1.0, 1.0, 0.7]
+      assignment_modes: [hard, hard, hard, hard]
+      assignment_temperatures: [1.0, 1.0, 1.0, 1.0]
       positive_similarity_scales: [false, false, false, false]
-      stage_modes: [hybrid, hybrid, cluster, hybrid]
-      local_branches: [lbpconv, dwconv, identity, dwconv]
-      local_ratios: [0.5, 0.5, 0.0, 0.25]
-      channel_shuffle: [true, true, false, true]
+      stage_modes: [hybrid, hybrid, cluster, cluster]
+      local_branches: [lbpconv, dwconv, identity, identity]
+      local_ratios: [0.5, 0.5, 0.0, 0.0]
+      channel_shuffle: [true, true, false, false]
       layer_scale_init_values: 1.0e-5
       norm: bn
       stem_patch_size: 3
@@ -69,8 +69,39 @@ models:
       drop_path_rate: 0.05
 
   hbcc_medium:
-    display_name: HBCC-Medium-Accuracy
+    display_name: HBCC-Medium-Wide
     kd_student: true
+    model:
+      name: hbcc
+      use_coord: true
+      embed_dims: [64, 96, 192, 288]
+      depths: [1, 1, 2, 1]
+      mlp_ratios: 3.0
+      heads: [2, 3, 4, 4]
+      head_dim: [16, 16, 16, 16]
+      proposals: [[2, 2], [2, 2], [2, 2], [1, 1]]
+      folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
+      similarities: [cosine, cosine, cosine, cosine]
+      assignment_modes: [hard, hard, hard, hard]
+      assignment_temperatures: [1.0, 1.0, 1.0, 1.0]
+      positive_similarity_scales: [false, false, false, false]
+      stage_modes: [hybrid, hybrid, cluster, cluster]
+      local_branches: [lbpconv, dwconv, identity, identity]
+      local_ratios: [0.5, 0.5, 0.0, 0.0]
+      channel_shuffle: [true, true, false, false]
+      layer_scale_init_values: 1.0e-5
+      norm: bn
+      stem_patch_size: 3
+      stem_stride: 1
+      stem_padding: 1
+      down_patch_size: 3
+      down_stride: 2
+      down_padding: 1
+      drop_rate: 0.0
+      drop_path_rate: 0.08
+
+  hbcc_medium_stage4_ablation:
+    display_name: HBCC-Medium-Stage4-Ablation
     model:
       name: hbcc
       use_coord: true
@@ -82,7 +113,7 @@ models:
       proposals: [[2, 2], [2, 2], [2, 2], [2, 2]]
       folds: [[4, 4], [2, 2], [1, 1], [1, 1]]
       similarities: [cosine, cosine, cosine, cosine]
-      assignment_modes: [hard_st, hard_st, hard_st, hard_st]
+      assignment_modes: [hard, hard, hard, hard_st]
       assignment_temperatures: [1.0, 1.0, 1.0, 0.7]
       positive_similarity_scales: [false, false, false, false]
       stage_modes: [hybrid, hybrid, cluster, hybrid]
@@ -99,3 +130,4 @@ models:
       down_padding: 1
       drop_rate: 0.0
       drop_path_rate: 0.08
+      stage_drop_path_rates: [[0.0], [0.02], [0.04, 0.06], [0.08, 0.08]]

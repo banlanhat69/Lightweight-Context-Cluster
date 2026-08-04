@@ -2,20 +2,31 @@
 
 Repository chỉ giữ pipeline cần thiết để chạy các thí nghiệm CIFAR-10/CIFAR-100 không augmentation. Train, validation và test chỉ dùng `ToTensor` và `Normalize`.
 
-## Kiến trúc HBCC Accuracy Stage 4
+## Kiến trúc HBCC-Wide Stage 4 v1 đã khôi phục
 
-Hai model HBCC giữ pipeline CIFAR không augmentation nhưng thay Stage 4 một-center bằng biến thể ưu tiên accuracy:
+Hai model HBCC dùng đúng kiến trúc CE tốt nhất đã đạt 84,20% trên CIFAR-10, seed 42 và 300 epoch:
 
 - độ phân giải bốn stage: `32x32 -> 16x16 -> 8x8 -> 4x4` (`stem_stride=1`);
 - fold: `4x4, 2x2, 1x1, 1x1`;
-- proposal: `2x2, 2x2, 2x2, 2x2`;
-- độ sâu của cả Small và Medium: `[1, 1, 2, 2]`;
+- proposal: `2x2, 2x2, 2x2, 1x1`;
+- độ sâu của cả Small và Medium: `[1, 1, 2, 1]`;
 - embed dim Small: `[48, 80, 160, 256]`, Medium: `[64, 96, 192, 288]`;
-- assignment: hard straight-through; temperature Stage 4 là `0.7`;
-- Stage 4 hybrid với 25% DWConv, channel shuffle và 75% Context Cluster;
+- assignment: hard ở cả bốn stage, temperature `1.0`;
+- Stage 4 là Context Cluster thuần, không có nhánh DWConv và không channel shuffle;
 - Drop Path Small/Medium: `0.05/0.08`.
 
-PointReducer giữ convolution `3x3`, stride 2. Runner in số tham số chính xác khi dựng model. Checkpoint HBCC tạo trước kiến trúc `hbcc_accuracy_stage4_v2` không tương thích; ResNet-18 teacher no-augmentation vẫn dùng lại được trong pipeline KD riêng.
+PointReducer giữ convolution `3x3`, stride 2. Kiến trúc được gắn định danh `hbcc_wide_stage4_v1`; checkpoint CE 84,20% của chính kiến trúc này tương thích. Toàn bộ DKD và Attention Transfer mới vẫn được giữ nguyên để thử nghiệm distillation trên baseline tốt nhất.
+
+## Ablation chỉ thay Stage 4
+
+Catalog có thêm `hbcc_medium_stage4_ablation` để so sánh trực tiếp với `hbcc_medium`. Variant giữ nguyên resolution, PointReducer, embed dim, classification head và toàn bộ Stage 1–3. Chỉ Stage 4 thay đổi:
+
+- depth `1 -> 2`;
+- proposal `1x1 -> 2x2`;
+- assignment `hard -> hard_st`, temperature `1.0 -> 0.7`;
+- Context Cluster thuần thành hybrid với 25% DWConv và channel shuffle.
+
+`assignment_modes` đúng là `[hard, hard, hard, hard_st]`; Stage 1–3 không dùng `hard_st`. Variant còn khai báo lịch DropPath theo stage để việc thêm block Stage 4 không âm thầm thay đổi DropPath của Stage 1–3. Runner kiểm tra toàn bộ các invariant này trước khi train.
 
 ## So sánh kiến trúc bằng CE
 
@@ -25,10 +36,11 @@ Mở [notebooks/run_ce_experiments.ipynb](notebooks/run_ce_experiments.ipynb) đ
 - MobileNetV2;
 - ShuffleNetV2;
 - CoC baseline;
-- HBCC-Small-Accuracy;
-- HBCC-Medium-Accuracy.
+- HBCC-Small-Wide;
+- HBCC-Medium-Wide;
+- HBCC-Medium-Stage4-Ablation.
 
-Chỉnh `CE_EPOCHS` và các switch `TRAIN_*` trong ô cấu hình. `SMOKE=True` dùng FakeData, một epoch và một batch để kiểm tra nhanh. Runner này không chứa teacher hoặc loss KD.
+Chỉnh `CE_EPOCHS` và các switch `TRAIN_*` trong ô cấu hình. Mặc định notebook chỉ bật HBCC-Medium baseline và Stage-4 ablation để tạo phép so sánh cô lập; cột `delta_vs_hbcc_medium` báo chênh lệch accuracy theo cùng dataset/seed. `SMOKE=True` dùng FakeData, một epoch và một batch để kiểm tra nhanh. Runner này không chứa teacher hoặc loss KD.
 
 ## Standard KD, DKD và DKD + Attention trên Kaggle
 
@@ -38,7 +50,7 @@ Mở [notebooks/run_hbcc_kd_dkd_kaggle.ipynb](notebooks/run_hbcc_kd_dkd_kaggle.i
 - DKD với hệ số tổng `DKD_SCALE`;
 - `dkd_at`: DKD kết hợp Attention Transfer trên feature Stage 2–4.
 
-Có thể bật/tắt từng student và từng phương pháp bằng các switch `TRAIN_HBCC_*`, `RUN_STANDARD_KD`, `RUN_DKD` và `RUN_DKD_AT`. Mặc định notebook chỉ chạy HBCC-Medium với `dkd_at`, 300 epoch, label smoothing 0, `DKD_SCALE=0.5` và Attention Transfer Stage 2–4. Mỗi run được gắn định danh `hbcc_accuracy_stage4_v2` và preflight xác nhận feature resolution `32/16/8/4` của cả teacher/student.
+Có thể bật/tắt từng student và từng phương pháp bằng các switch `TRAIN_HBCC_*`, `RUN_STANDARD_KD`, `RUN_DKD` và `RUN_DKD_AT`. Mặc định notebook chỉ chạy HBCC-Medium với `dkd_at`, 300 epoch, label smoothing 0, `DKD_SCALE=0.5` và Attention Transfer Stage 2–4. Mỗi run được gắn định danh `hbcc_wide_stage4_v1`; preflight xác nhận toàn bộ catalog và feature resolution `32/16/8/4` của teacher/student.
 
 Nếu `REFERENCE_RESULTS_ROOTS` chứa run CE của ResNet-18, bảng cuối tự tính `gap_to_teacher` và `within_target_gap` với ngưỡng chỉnh được `TARGET_GAP_TO_TEACHER=0.5`.
 
