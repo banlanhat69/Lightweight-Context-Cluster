@@ -109,6 +109,7 @@ def train_one_epoch(
     limit_batches: int | None = None,
     progress: bool = True,
     grad_clip_norm: float | None = None,
+    batch_augment: Any | None = None,
 ) -> dict[str, float]:
     criterion.set_epoch(epoch)
     model.train()
@@ -135,6 +136,8 @@ def train_one_epoch(
             break
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
+        if batch_augment is not None:
+            images, target = batch_augment(images, target)
         optimizer.zero_grad(set_to_none=True)
         teacher_features = None
         with torch.no_grad(), autocast(
@@ -184,7 +187,12 @@ def train_one_epoch(
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
         scaler.step(optimizer)
         scaler.update()
-        acc1 = accuracy(output.detach(), target, (1,))[0].item()
+        if target.ndim == 2:
+            predicted = output.detach().argmax(dim=1, keepdim=True)
+            # Expected correctness under the Mixup/CutMix probability target.
+            acc1 = target.gather(1, predicted).mean().mul(100.0).item()
+        else:
+            acc1 = accuracy(output.detach(), target, (1,))[0].item()
         loss_meter.update(loss.item(), images.size(0))
         acc_meter.update(acc1, images.size(0))
         component_names = list(criterion.last_components)

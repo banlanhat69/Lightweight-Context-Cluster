@@ -9,12 +9,12 @@ from .hbcc import HBCCNet
 
 HBCC_FOOD101_BEST_CONFIG: dict[str, Any] = {
     "use_coord": True,
-    "embed_dims": [64, 96, 192, 288],
-    "depths": [2, 2, 4, 2],
-    "mlp_ratios": [4.0, 4.0, 4.0, 4.0],
-    # Avoid the former 192/216 -> 64 cluster-projection bottleneck.
-    "heads": [2, 3, 6, 7],
-    "head_dim": [16, 16, 32, 32],
+    "embed_dims": [48, 80, 160, 256],
+    "depths": [2, 2, 3, 2],
+    "mlp_ratios": [3.0, 3.0, 3.0, 3.0],
+    # Exact-width cluster projections: 24/40/160/192 channels in and out.
+    "heads": [2, 2, 5, 6],
+    "head_dim": [12, 20, 32, 32],
     "proposals": [[2, 2], [2, 2], [2, 2], [2, 2]],
     # 56/28/14/7 feature maps become uniform 7x7 clustering regions.
     "folds": [[8, 8], [4, 4], [2, 2], [1, 1]],
@@ -53,4 +53,3 @@ def hbcc_food101_best(num_classes: int = 101, **overrides: Any) -> nn.Module:
             + ", ".join(unexpected)
         )
     return HBCCNet(num_classes=num_classes, **HBCC_FOOD101_BEST_CONFIG)
-

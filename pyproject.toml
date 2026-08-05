@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lightweight-hbcc"
 version = "0.1.0"
-description = "No-augmentation HBCC/Context-Cluster experiments for CIFAR and Food-101."
+description = "Reproducible HBCC/Context-Cluster experiments for CIFAR and Food-101."
 requires-python = ">=3.10"
 dependencies = [
     "einops",

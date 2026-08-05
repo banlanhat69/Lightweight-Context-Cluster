@@ -1,4 +1,4 @@
-# Lightweight HBCC - no-augmentation experiments
+# Lightweight HBCC experiments
 
 ## Food-101 224x224: canonical HBCC comparison
 
@@ -6,19 +6,25 @@ The Food-101 pipeline is source-based and uses
 [`notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb`](notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb)
 as its main entry point. It downloads `torchvision.datasets.Food101`, creates a
 fixed per-class split of 675 train / 75 validation / 250 held-out test images,
-and compares two randomly initialized models under the same no-augmentation
-training recipe:
+and compares two randomly initialized models under the same CoC-style
+ImageNet training recipe:
 
 - `hbcc_food101_best`: the locked Food-101 HBCC architecture in
   `lightweight_hbcc/models/food101.py`;
 - `resnet18_224`: standard torchvision ResNet-18 with `weights=None`.
 
-HBCC-Food101 keeps hard assignment and the existing four-stage hybrid design,
-but removes the late-stage projection bottleneck, uses uniform 7x7 cluster
-regions, GroupNorm, stronger layer scale, additional depth, positive similarity
-scales, stochastic depth, and a training-only differentiable center-balance
-regularizer. The test split is evaluated only after selecting the best validation
-checkpoint.
+The train transform ports the original CoC ImageNet-1K defaults to Food-101:
+`RandomResizedCrop(224, scale=0.08..1.0)`, horizontal flip, RandAugment,
+ImageNet normalization, Random Erasing 0.25, Mixup 0.8, CutMix 1.0, and label
+smoothing 0.1. Validation/test use resize-to-249 then center-crop-to-224 and no
+random operation. Both models receive the identical recipe; ResNet-18 explicitly
+uses `weights=None`.
+
+`hbcc_food101_best` has 2,566,391 total parameters (2,562,935 trainable). It
+keeps hard assignment and the four-stage hybrid design, while using uniform
+7x7 cluster regions, GroupNorm, positive similarity scales, stochastic depth,
+and a small training-only differentiable center-balance regularizer. The test
+split is evaluated only after selecting the best validation checkpoint.
 
 Command-line equivalent:
 
@@ -30,7 +36,8 @@ python tools/run_food101_experiments.py `
   --epochs 60
 ```
 
-Repository chỉ giữ pipeline cần thiết để chạy các thí nghiệm CIFAR-10/CIFAR-100 không augmentation. Train, validation và test chỉ dùng `ToTensor` và `Normalize`.
+Các thí nghiệm CIFAR-10/CIFAR-100 cũ vẫn giữ giao thức không augmentation;
+recipe CoC ở trên chỉ áp dụng cho pipeline Food-101 mới.
 
 ## Kiến trúc HBCC-Wide Stage 4 v1 đã khôi phục
 

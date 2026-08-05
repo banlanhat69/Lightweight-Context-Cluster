@@ -20,7 +20,7 @@ def _collapse_target_and_other(
 
 
 class DistillationLoss(nn.Module):
-    """CE, standard KD, legacy reverse-KL KD, and DKD without augmentation.
+    """CE (hard or mixed targets), standard KD, reverse-KL KD, and DKD.
 
     ``standard`` follows the usual soft-target direction
     ``KL(teacher || student)``. ``reverse_kd`` preserves equation (16) from
@@ -227,13 +227,29 @@ class DistillationLoss(nn.Module):
         student_features: tuple[torch.Tensor, ...] | list[torch.Tensor] | None = None,
         teacher_features: tuple[torch.Tensor, ...] | list[torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        if target.ndim != 1:
-            raise ValueError("No-augmentation training requires one hard class label per sample.")
-        ce = F.cross_entropy(
-            student_logits,
-            target,
-            label_smoothing=self.label_smoothing,
-        )
+        if target.ndim == 1:
+            ce = F.cross_entropy(
+                student_logits,
+                target,
+                label_smoothing=self.label_smoothing,
+            )
+        elif target.ndim == 2 and target.shape == student_logits.shape:
+            if teacher_logits is not None or self.method != "none":
+                raise ValueError("Probability targets are supported only for CE training.")
+            probabilities = target.float()
+            if self.label_smoothing > 0.0:
+                probabilities = (
+                    probabilities * (1.0 - self.label_smoothing)
+                    + self.label_smoothing / student_logits.shape[1]
+                )
+            ce = -(
+                probabilities * F.log_softmax(student_logits.float(), dim=1)
+            ).sum(dim=1).mean()
+        else:
+            raise ValueError(
+                "Target must contain hard class indices or class probabilities, got "
+                f"shape {tuple(target.shape)}."
+            )
         if teacher_logits is None:
             if self.method != "none":
                 raise ValueError(

@@ -13,12 +13,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_SCRIPT = PROJECT_ROOT / "tools" / "train.py"
 EXPERIMENTS = {
     "hbcc": {
-        "config": PROJECT_ROOT / "configs" / "food101" / "hbcc_best_no_augmentation.yaml",
-        "run_name": "food101_hbcc_best_noaug_seed42",
+        "config": PROJECT_ROOT / "configs" / "food101" / "hbcc_2p5m_coc_recipe.yaml",
+        "run_name": "food101_hbcc_2p5m_coc_recipe_seed42",
     },
     "resnet18": {
-        "config": PROJECT_ROOT / "configs" / "food101" / "resnet18_scratch_no_augmentation.yaml",
-        "run_name": "food101_resnet18_scratch_noaug_seed42",
+        "config": PROJECT_ROOT / "configs" / "food101" / "resnet18_scratch_coc_recipe.yaml",
+        "run_name": "food101_resnet18_scratch_coc_recipe_seed42",
     },
 }
 
@@ -126,4 +126,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

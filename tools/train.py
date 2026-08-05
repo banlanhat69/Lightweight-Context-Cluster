@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 from torch.amp import GradScaler
 
+from lightweight_hbcc.augment import MixupCutmix
 from lightweight_hbcc.config import apply_overrides, load_config, save_config
 from lightweight_hbcc.data import (
     build_loaders,
@@ -100,15 +101,16 @@ def validate_training_mode(
     teacher_config: str | None,
     teacher_checkpoint: str | None,
 ) -> bool:
-    """Enforce the two supported modes: no-aug CE or no-aug HBCC KD."""
+    """Validate CE/KD mode and guard augmentation-incompatible settings."""
 
     train_cfg = cfg.setdefault("train", {})
     legacy_keys = sorted(_REMOVED_BATCH_AUGMENTATION_KEYS.intersection(train_cfg))
-    if legacy_keys:
+    augmentation = str(cfg.get("protocol", {}).get("augmentation", "none")).lower()
+    if legacy_keys and augmentation == "none":
         joined = ", ".join(legacy_keys)
         raise ValueError(
-            "This pipeline intentionally has no batch augmentation. "
-            f"Remove legacy train settings: {joined}"
+            "Batch augmentation settings require a non-none protocol.augmentation. "
+            f"Remove these settings or select an augmentation recipe: {joined}"
         )
 
     if bool(teacher_config) != bool(teacher_checkpoint):
@@ -348,7 +350,21 @@ def main() -> None:
     print("setup: building model...", flush=True)
     model = build_model(cfg).to(device)
     param_count = sum(p.numel() for p in model.parameters())
-    print(f"setup: model ready params={param_count} elapsed={time.perf_counter() - setup_start:.1f}s", flush=True)
+    trainable_param_count = sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    )
+    print(
+        f"setup: model ready params={param_count} trainable_params={trainable_param_count} "
+        f"elapsed={time.perf_counter() - setup_start:.1f}s",
+        flush=True,
+    )
+    if cfg["model"].get("name") == "hbcc_food101_best" and not (
+        2_400_000 <= param_count <= 2_700_000
+    ):
+        raise RuntimeError(
+            "Canonical HBCC-Food101 must remain near 2.5M parameters; "
+            f"got {param_count:,}."
+        )
     image_size = int(cfg.get("data", {}).get("image_size", 32))
     expected_classes = int(cfg["model"]["num_classes"])
     was_training = model.training
@@ -410,6 +426,20 @@ def main() -> None:
             train_cfg.get("feature_kd_warmup_epochs", 20)
         ),
     )
+    mixup_alpha = float(train_cfg.get("mixup_alpha", 0.0))
+    cutmix_alpha = float(train_cfg.get("cutmix_alpha", 0.0))
+    batch_augment = None
+    if mixup_alpha > 0.0 or cutmix_alpha > 0.0:
+        if has_teacher:
+            raise ValueError("Mixup/CutMix are currently supported only for CE runs.")
+        batch_augment = MixupCutmix(
+            num_classes=int(cfg["model"]["num_classes"]),
+            mixup_alpha=mixup_alpha,
+            cutmix_alpha=cutmix_alpha,
+            probability=float(train_cfg.get("mixup_cutmix_prob", 1.0)),
+            switch_probability=float(train_cfg.get("mixup_switch_prob", 0.5)),
+            seed=int(train_cfg.get("seed", 42)) + 1000,
+        )
     amp = bool(train_cfg.get("amp", True))
     scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
     print(f"train: starting epochs={epochs} skip_test={skip_test}", flush=True)
@@ -433,6 +463,7 @@ def main() -> None:
                 if train_cfg.get("grad_clip_norm") is not None
                 else None
             ),
+            batch_augment=batch_augment,
         )
         val_metrics = evaluate(
             model,

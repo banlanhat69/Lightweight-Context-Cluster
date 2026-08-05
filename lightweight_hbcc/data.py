@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random
 from typing import Any
 
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
+from torchvision.transforms import functional as transform_functional
 
 
 CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
@@ -22,6 +24,60 @@ _REMOVED_AUGMENTATION_KEYS = {
     "random_resized_crop",
     "rrc_scale",
 }
+
+
+class RandomResizedCropRandomInterpolation(transforms.RandomResizedCrop):
+    """CoC/timm-style crop with a per-image bilinear/bicubic choice."""
+
+    def forward(self, image: Any) -> Any:
+        top, left, height, width = self.get_params(image, self.scale, self.ratio)
+        interpolation = random.choice(
+            (
+                transforms.InterpolationMode.BILINEAR,
+                transforms.InterpolationMode.BICUBIC,
+            )
+        )
+        return transform_functional.resized_crop(
+            image,
+            top,
+            left,
+            height,
+            width,
+            self.size,
+            interpolation,
+            antialias=getattr(self, "antialias", True),
+        )
+
+
+class CoCRandAugment:
+    """torchvision equivalent of timm ``rand-m9-mstd0.5-inc1``."""
+
+    def __init__(
+        self,
+        num_ops: int = 2,
+        magnitude: int = 9,
+        magnitude_std: float = 0.5,
+        num_magnitude_bins: int = 11,
+    ) -> None:
+        if num_magnitude_bins <= 1:
+            raise ValueError("num_magnitude_bins must be greater than one.")
+        self.magnitude = int(magnitude)
+        self.magnitude_std = float(magnitude_std)
+        self.maximum_magnitude = int(num_magnitude_bins) - 1
+        self.transforms = {
+            level: transforms.RandAugment(
+                num_ops=int(num_ops),
+                magnitude=level,
+                num_magnitude_bins=int(num_magnitude_bins),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            )
+            for level in range(int(num_magnitude_bins))
+        }
+
+    def __call__(self, image: Any) -> Any:
+        level = int(round(random.gauss(self.magnitude, self.magnitude_std)))
+        level = max(0, min(level, self.maximum_magnitude))
+        return self.transforms[level](image)
 
 
 def num_classes_for_dataset(name: str) -> int:
@@ -41,7 +97,8 @@ def validate_no_augmentation_config(cfg: dict[str, Any]) -> None:
     """Reject legacy augmentation settings instead of silently ignoring them."""
 
     legacy_keys = sorted(_REMOVED_AUGMENTATION_KEYS.intersection(cfg))
-    if legacy_keys:
+    augmentation = str(cfg.get("augmentation", "none")).lower()
+    if legacy_keys and augmentation == "none":
         joined = ", ".join(legacy_keys)
         raise ValueError(
             "This pipeline intentionally has no data augmentation. "
@@ -69,6 +126,78 @@ def build_transform(name: str, image_size: int = 224) -> transforms.Compose:
     else:
         raise ValueError(f"Unsupported dataset: {name}")
     return transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)])
+
+
+def build_food101_transform(cfg: dict[str, Any], training: bool) -> transforms.Compose:
+    """Build the Food-101 port of the official CoC ImageNet transform.
+
+    torchvision's RandAugment is used as the dependency-free equivalent of
+    timm's ``rand-m9-mstd0.5-inc1`` policy. Validation follows CoC's 0.9
+    center-crop ratio. All tensors reaching a model are exactly ``image_size``.
+    """
+
+    image_size = int(cfg.get("image_size", 224))
+    augmentation = str(cfg.get("augmentation", "none")).lower()
+    normalize = transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
+    if training and augmentation == "coc_food101_v1":
+        scale = tuple(float(value) for value in cfg.get("rrc_scale", (0.08, 1.0)))
+        ratio = tuple(float(value) for value in cfg.get("rrc_ratio", (0.75, 4.0 / 3.0)))
+        interpolation = str(cfg.get("train_interpolation", "random")).lower()
+        if interpolation == "random":
+            crop: transforms.RandomResizedCrop = RandomResizedCropRandomInterpolation(
+                image_size,
+                scale=scale,
+                ratio=ratio,
+            )
+        elif interpolation in {"bilinear", "bicubic"}:
+            crop = transforms.RandomResizedCrop(
+                image_size,
+                scale=scale,
+                ratio=ratio,
+                interpolation=getattr(transforms.InterpolationMode, interpolation.upper()),
+            )
+        else:
+            raise ValueError(
+                "train_interpolation must be random, bilinear, or bicubic; "
+                f"got {interpolation!r}."
+            )
+        return transforms.Compose(
+            [
+                crop,
+                transforms.RandomHorizontalFlip(p=float(cfg.get("hflip", 0.5))),
+                CoCRandAugment(
+                    num_ops=int(cfg.get("randaugment_num_ops", 2)),
+                    magnitude=int(cfg.get("randaugment_magnitude", 9)),
+                    magnitude_std=float(cfg.get("randaugment_magnitude_std", 0.5)),
+                    num_magnitude_bins=int(
+                        cfg.get("randaugment_num_magnitude_bins", 11)
+                    ),
+                ),
+                transforms.ToTensor(),
+                normalize,
+                transforms.RandomErasing(
+                    p=float(cfg.get("random_erasing", 0.25)),
+                    value="random",
+                ),
+            ]
+        )
+    if augmentation not in {"none", "coc_food101_v1"}:
+        raise ValueError(f"Unsupported Food-101 augmentation recipe: {augmentation}")
+    if augmentation == "coc_food101_v1":
+        crop_pct = float(cfg.get("eval_crop_pct", 0.9))
+        resize_size = int(round(image_size / crop_pct))
+        return transforms.Compose(
+            [
+                transforms.Resize(
+                    resize_size,
+                    interpolation=transforms.InterpolationMode.BICUBIC,
+                ),
+                transforms.CenterCrop(image_size),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+    return build_transform("food101", image_size=image_size)
 
 
 def _train_val_indices(length: int, val_size: int, seed: int) -> tuple[list[int], list[int]]:
@@ -158,25 +287,25 @@ def build_datasets(
         train = Subset(train_full, train_indices)
         val = Subset(val_full, val_indices)
     elif name == "food101":
-        image_size = int(cfg.get("image_size", 224))
-        transform = build_transform(name, image_size=image_size)
+        train_transform = build_food101_transform(cfg, training=True)
+        eval_transform = build_food101_transform(cfg, training=False)
         train_full = datasets.Food101(
             root=root,
             split="train",
-            transform=transform,
+            transform=train_transform,
             download=download,
         )
         val_full = datasets.Food101(
             root=root,
             split="train",
-            transform=build_transform(name, image_size=image_size),
+            transform=eval_transform,
             download=download,
         )
         test = (
             datasets.Food101(
                 root=root,
                 split="test",
-                transform=build_transform(name, image_size=image_size),
+                transform=eval_transform,
                 download=download,
             )
             if include_test
