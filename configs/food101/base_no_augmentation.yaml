@@ -1,0 +1,35 @@
+protocol:
+  purpose: food101_architecture_comparison_from_scratch
+  dataset: food101
+  session: baseline
+  augmentation: none
+  canonical: true
+
+data:
+  name: food101
+  root: data/food101
+  download: true
+  image_size: 224
+  val_fraction: 0.10
+  split_seed: 42
+  batch_size: 32
+  val_batch_size: 64
+  test_batch_size: 64
+  workers: 2
+  pin_memory: true
+  drop_last: true
+  loader_seed: 42
+
+train:
+  seed: 42
+  deterministic: false
+  epochs: 60
+  warmup_epochs: 5
+  lr: 0.0005
+  weight_decay: 0.05
+  grad_clip_norm: 1.0
+  label_smoothing: 0.10
+  amp: true
+  kd_method: none
+  kd_alpha: 0.0
+  skip_test: false

@@ -8,16 +8,20 @@ from torch import nn
 from .baselines import (
     mobilenet_v2_cifar,
     resnet18_cifar,
+    resnet18_224,
     shufflenet_v2_x1_0_cifar,
 )
 from .hbcc import HBCCNet
+from .food101 import hbcc_food101_best
 
 
 MODEL_REGISTRY: dict[str, Callable[..., nn.Module]] = {
     "resnet18_cifar": resnet18_cifar,
+    "resnet18_224": resnet18_224,
     "mobilenet_v2_cifar": mobilenet_v2_cifar,
     "shufflenet_v2_x1_0_cifar": shufflenet_v2_x1_0_cifar,
     "hbcc": HBCCNet,
+    "hbcc_food101_best": hbcc_food101_best,
 }
 
 

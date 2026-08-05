@@ -108,6 +108,7 @@ def train_one_epoch(
     scaler: GradScaler | None = None,
     limit_batches: int | None = None,
     progress: bool = True,
+    grad_clip_norm: float | None = None,
 ) -> dict[str, float]:
     criterion.set_epoch(epoch)
     model.train()
@@ -166,7 +167,21 @@ def train_one_epoch(
                 student_features=student_features,
                 teacher_features=teacher_features,
             )
+            balance_weight = float(
+                getattr(model, "cluster_balance_loss_weight", 0.0)
+            )
+            if balance_weight > 0.0 and hasattr(model, "auxiliary_loss"):
+                balance_loss = model.auxiliary_loss()
+                weighted_balance_loss = balance_weight * balance_loss
+                loss = loss + weighted_balance_loss
+                criterion.last_components["cluster_balance"] = balance_loss.detach()
+                criterion.last_components["cluster_balance_weighted"] = (
+                    weighted_balance_loss.detach()
+                )
         scaler.scale(loss).backward()
+        if grad_clip_norm is not None and grad_clip_norm > 0.0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
         scaler.step(optimizer)
         scaler.update()
         acc1 = accuracy(output.detach(), target, (1,))[0].item()

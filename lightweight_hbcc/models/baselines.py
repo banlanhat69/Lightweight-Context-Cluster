@@ -11,6 +11,12 @@ def resnet18_cifar(num_classes: int = 10, **_: object) -> nn.Module:
     return model
 
 
+def resnet18_224(num_classes: int = 101, **_: object) -> nn.Module:
+    """Standard torchvision ResNet-18, always initialized from scratch."""
+
+    return models.resnet18(weights=None, num_classes=num_classes)
+
+
 def mobilenet_v2_cifar(num_classes: int = 10, **_: object) -> nn.Module:
     model = models.mobilenet_v2(weights=None, num_classes=num_classes)
     model.features[0][0].stride = (1, 1)

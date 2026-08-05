@@ -1,0 +1,8 @@
+_base_: base_no_augmentation.yaml
+
+experiment:
+  name: food101_hbcc_best_noaug_seed42
+
+model:
+  name: hbcc_food101_best
+

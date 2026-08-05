@@ -74,6 +74,27 @@ def is_controlled_comparison(cfg: dict[str, Any]) -> bool:
     return "architecture_comparison" in purpose or "compare_model_architectures" in purpose
 
 
+def adamw_parameter_groups(
+    model: torch.nn.Module,
+    weight_decay: float,
+) -> list[dict[str, Any]]:
+    """Exclude biases, norm scales, and scalar gates from weight decay."""
+
+    decay: list[torch.nn.Parameter] = []
+    no_decay: list[torch.nn.Parameter] = []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if parameter.ndim < 2 or name.endswith(".bias"):
+            no_decay.append(parameter)
+        else:
+            decay.append(parameter)
+    return [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+
+
 def validate_training_mode(
     cfg: dict[str, Any],
     teacher_config: str | None,
@@ -328,14 +349,41 @@ def main() -> None:
     model = build_model(cfg).to(device)
     param_count = sum(p.numel() for p in model.parameters())
     print(f"setup: model ready params={param_count} elapsed={time.perf_counter() - setup_start:.1f}s", flush=True)
+    image_size = int(cfg.get("data", {}).get("image_size", 32))
+    expected_classes = int(cfg["model"]["num_classes"])
+    was_training = model.training
+    model.eval()
+    with torch.inference_mode():
+        sample = torch.zeros(1, 3, image_size, image_size, device=device)
+        sample_output = model(sample)
+        if tuple(sample_output.shape) != (1, expected_classes):
+            raise RuntimeError(
+                f"Model preflight expected logits {(1, expected_classes)}, "
+                f"got {tuple(sample_output.shape)}."
+            )
+        if cfg["model"].get("name") == "hbcc_food101_best":
+            feature_shapes = [
+                tuple(feature.shape[-2:])
+                for feature in model.forward_intermediates(sample)
+            ]
+            expected_shapes = [(56, 56), (28, 28), (14, 14), (7, 7)]
+            if feature_shapes != expected_shapes:
+                raise RuntimeError(
+                    f"HBCC Food-101 feature shapes must be {expected_shapes}, "
+                    f"got {feature_shapes}."
+                )
+            print(f"setup: HBCC feature shapes={feature_shapes}", flush=True)
+    model.train(was_training)
     if args.resume:
         print(f"setup: loading checkpoint {args.resume}", flush=True)
         load_checkpoint(model, args.resume, device, strict=False)
 
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        adamw_parameter_groups(
+            model,
+            weight_decay=float(train_cfg.get("weight_decay", 0.05)),
+        ),
         lr=float(train_cfg.get("lr", 1e-3)),
-        weight_decay=float(train_cfg.get("weight_decay", 0.05)),
     )
     epochs = int(train_cfg.get("epochs", 200))
     warmup_epochs = int(train_cfg.get("warmup_epochs", 0))
@@ -380,6 +428,11 @@ def main() -> None:
             scaler=scaler,
             limit_batches=args.limit_train_batches,
             progress=not args.no_progress,
+            grad_clip_norm=(
+                float(train_cfg["grad_clip_norm"])
+                if train_cfg.get("grad_clip_norm") is not None
+                else None
+            ),
         )
         val_metrics = evaluate(
             model,
@@ -426,6 +479,8 @@ def main() -> None:
                     "train_nckd_loss",
                     "train_dkd_loss",
                     "train_attention_loss",
+                    "train_cluster_balance_loss",
+                    "train_cluster_balance_weighted_loss",
                 ):
                     if metric_name in record:
                         label = metric_name.removeprefix("train_").removesuffix("_loss")

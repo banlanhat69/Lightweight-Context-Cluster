@@ -5,7 +5,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from .cluster import Stage
+from .cluster import ContextClusterOp, Stage
 from .layers import CoordinateAugment, PointReducer, make_norm
 
 
@@ -183,12 +183,7 @@ def _tuple2(value: Any) -> tuple[int, int]:
 
 
 class HBCCNet(nn.Module):
-    """CIFAR HBCC matching the best observed no-augmentation CE architecture.
-
-    The stem keeps the 32x32 CIFAR resolution and the stages operate at
-    32/16/8/4. Stage 4 has one pure-cluster block and one global proposal,
-    with 256 output features for Small and 288 for Medium.
-    """
+    """Four-stage hybrid binary/context-cluster image classifier."""
 
     def __init__(
         self,
@@ -221,6 +216,8 @@ class HBCCNet(nn.Module):
         drop_rate: float = 0.0,
         drop_path_rate: float = 0.05,
         stage_drop_path_rates: list[list[float]] | tuple[tuple[float, ...], ...] | None = None,
+        cluster_balance_loss_weight: float = 0.0,
+        cluster_balance_temperature: float = 1.0,
     ) -> None:
         super().__init__()
         if len(embed_dims) != 4 or len(depths) != 4:
@@ -230,6 +227,12 @@ class HBCCNet(nn.Module):
         self.depths = list(depths)
         self.use_coord = use_coord
         self.stem_stride = int(stem_stride)
+        self.cluster_balance_loss_weight = float(cluster_balance_loss_weight)
+        self.cluster_balance_temperature = float(cluster_balance_temperature)
+        if self.cluster_balance_loss_weight < 0.0:
+            raise ValueError("cluster_balance_loss_weight must be non-negative.")
+        if self.cluster_balance_temperature <= 0.0:
+            raise ValueError("cluster_balance_temperature must be positive.")
         self.coord = CoordinateAugment(enabled=use_coord)
         stem_in = in_chans + (2 if use_coord else 0)
         self.stem = PointReducer(stem_in, embed_dims[0], stem_patch_size, stem_stride, stem_padding, norm=norm)
@@ -329,6 +332,10 @@ class HBCCNet(nn.Module):
                 )
         self.norm = make_norm(norm, embed_dims[-1])
         self.head = nn.Linear(embed_dims[-1], num_classes)
+        for module in self.modules():
+            if isinstance(module, ContextClusterOp):
+                module.compute_balance_loss = self.cluster_balance_loss_weight > 0.0
+                module.balance_temperature = self.cluster_balance_temperature
 
     def forward_intermediates(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """Return the four post-stage feature maps at 32/16/8/4 resolution."""
@@ -359,3 +366,16 @@ class HBCCNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         logits, _ = self.forward_with_features(x)
         return logits
+
+    def auxiliary_loss(self) -> torch.Tensor:
+        """Return the unweighted differentiable center-usage balance loss."""
+
+        losses = [
+            module.last_balance_loss
+            for module in self.modules()
+            if isinstance(module, ContextClusterOp)
+            and module.last_balance_loss is not None
+        ]
+        if not losses:
+            return self.head.weight.new_zeros(())
+        return torch.stack(losses).mean()

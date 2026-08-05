@@ -85,6 +85,9 @@ class ContextClusterOp(nn.Module):
         self.binary_scale = nn.Parameter(torch.ones(1)) if hamming_scale else None
         self.centers_proposal = nn.AdaptiveAvgPool2d(proposal)
         self.last_assignment: torch.Tensor | None = None
+        self.compute_balance_loss = False
+        self.balance_temperature = 1.0
+        self.last_balance_loss: torch.Tensor | None = None
 
     def _similarity(self, centers: torch.Tensor, points: torch.Tensor) -> torch.Tensor:
         if self.similarity == "cosine":
@@ -131,6 +134,7 @@ class ContextClusterOp(nn.Module):
         return rearrange(x, "(b fh fw) c h w -> b c (fh h) (fw w)", b=b, fh=fold_h, fw=fold_w)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.last_balance_loss = None
         value = self.v(x)
         feat = self.f(x)
         feat = rearrange(feat, "b (heads c) h w -> (b heads) c h w", heads=self.heads)
@@ -149,6 +153,14 @@ class ContextClusterOp(nn.Module):
 
         raw_sim = self._similarity(centers_flat, points_flat)
         logits = self.sim_beta + self.effective_sim_alpha() * raw_sim
+        if self.training and self.compute_balance_loss:
+            probabilities = torch.softmax(logits / self.balance_temperature, dim=1)
+            center_usage = probabilities.mean(dim=(0, 2))
+            center_count = center_usage.numel()
+            self.last_balance_loss = (
+                center_usage
+                * (center_usage.clamp_min(1e-8).log() + math.log(center_count))
+            ).sum()
         confidence = torch.sigmoid(logits)
         assignment, sim_max_idx = self._assign(logits)
         if self.store_assignments:

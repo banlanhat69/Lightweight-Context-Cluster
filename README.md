@@ -1,5 +1,35 @@
 # Lightweight HBCC - no-augmentation experiments
 
+## Food-101 224x224: canonical HBCC comparison
+
+The Food-101 pipeline is source-based and uses
+[`notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb`](notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb)
+as its main entry point. It downloads `torchvision.datasets.Food101`, creates a
+fixed per-class split of 675 train / 75 validation / 250 held-out test images,
+and compares two randomly initialized models under the same no-augmentation
+training recipe:
+
+- `hbcc_food101_best`: the locked Food-101 HBCC architecture in
+  `lightweight_hbcc/models/food101.py`;
+- `resnet18_224`: standard torchvision ResNet-18 with `weights=None`.
+
+HBCC-Food101 keeps hard assignment and the existing four-stage hybrid design,
+but removes the late-stage projection bottleneck, uses uniform 7x7 cluster
+regions, GroupNorm, stronger layer scale, additional depth, positive similarity
+scales, stochastic depth, and a training-only differentiable center-balance
+regularizer. The test split is evaluated only after selecting the best validation
+checkpoint.
+
+Command-line equivalent:
+
+```powershell
+python tools/run_food101_experiments.py `
+  --models hbcc resnet18 `
+  --data-root data/food101 `
+  --output runs/food101 `
+  --epochs 60
+```
+
 Repository chỉ giữ pipeline cần thiết để chạy các thí nghiệm CIFAR-10/CIFAR-100 không augmentation. Train, validation và test chỉ dùng `ToTensor` và `Normalize`.
 
 ## Kiến trúc HBCC-Wide Stage 4 v1 đã khôi phục

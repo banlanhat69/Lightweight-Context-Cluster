@@ -12,6 +12,8 @@ CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
 CIFAR10_STD = (0.2470, 0.2435, 0.2616)
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
 CIFAR100_STD = (0.2675, 0.2565, 0.2761)
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
 
 _REMOVED_AUGMENTATION_KEYS = {
     "augment",
@@ -30,6 +32,8 @@ def num_classes_for_dataset(name: str) -> int:
         return 100
     if name == "fake":
         return 10
+    if name == "food101":
+        return 101
     raise ValueError(f"Unsupported dataset: {name}")
 
 
@@ -45,7 +49,7 @@ def validate_no_augmentation_config(cfg: dict[str, Any]) -> None:
         )
 
 
-def build_transform(name: str) -> transforms.Compose:
+def build_transform(name: str, image_size: int = 224) -> transforms.Compose:
     """Build the identical normalization-only transform for every split."""
 
     name = name.lower()
@@ -53,6 +57,15 @@ def build_transform(name: str) -> transforms.Compose:
         mean, std = CIFAR100_MEAN, CIFAR100_STD
     elif name in {"cifar10", "fake"}:
         mean, std = CIFAR10_MEAN, CIFAR10_STD
+    elif name == "food101":
+        mean, std = IMAGENET_MEAN, IMAGENET_STD
+        return transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
     else:
         raise ValueError(f"Unsupported dataset: {name}")
     return transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)])
@@ -65,6 +78,43 @@ def _train_val_indices(length: int, val_size: int, seed: int) -> tuple[list[int]
     indices = torch.randperm(length, generator=generator).tolist()
     val_indices = indices[:val_size]
     train_indices = indices[val_size:]
+    return train_indices, val_indices
+
+
+def _food101_stratified_indices(
+    dataset: torch.utils.data.Dataset,
+    val_fraction: float,
+    seed: int,
+) -> tuple[list[int], list[int]]:
+    """Create the canonical per-class Food-101 train/validation split."""
+
+    if not 0.0 < val_fraction < 1.0:
+        raise ValueError(f"val_fraction must be in (0, 1), got {val_fraction}")
+    raw_labels = list(getattr(dataset, "_labels", []))
+    classes = list(getattr(dataset, "classes", []))
+    if len(raw_labels) != len(dataset) or not classes:
+        raise RuntimeError("Unsupported torchvision Food101 label metadata.")
+    class_to_idx = {name: idx for idx, name in enumerate(classes)}
+    if isinstance(raw_labels[0], str):
+        labels = [class_to_idx[label] for label in raw_labels]
+    else:
+        labels = [int(label) for label in raw_labels]
+
+    generator = torch.Generator().manual_seed(seed)
+    train_indices: list[int] = []
+    val_indices: list[int] = []
+    label_tensor = torch.tensor(labels, dtype=torch.long)
+    for class_idx in range(len(classes)):
+        class_indices = torch.nonzero(label_tensor == class_idx, as_tuple=False).flatten()
+        order = torch.randperm(class_indices.numel(), generator=generator)
+        class_indices = class_indices[order]
+        val_count = int(round(class_indices.numel() * val_fraction))
+        val_indices.extend(class_indices[:val_count].tolist())
+        train_indices.extend(class_indices[val_count:].tolist())
+    if set(train_indices).intersection(val_indices):
+        raise RuntimeError("Food-101 train/validation split contains overlapping indices.")
+    if len(train_indices) + len(val_indices) != len(dataset):
+        raise RuntimeError("Food-101 train/validation split lost samples.")
     return train_indices, val_indices
 
 
@@ -105,6 +155,38 @@ def build_datasets(
         val_size = int(cfg.get("val_size", 5000))
         split_seed = int(cfg.get("split_seed", 42))
         train_indices, val_indices = _train_val_indices(len(train_full), val_size, split_seed)
+        train = Subset(train_full, train_indices)
+        val = Subset(val_full, val_indices)
+    elif name == "food101":
+        image_size = int(cfg.get("image_size", 224))
+        transform = build_transform(name, image_size=image_size)
+        train_full = datasets.Food101(
+            root=root,
+            split="train",
+            transform=transform,
+            download=download,
+        )
+        val_full = datasets.Food101(
+            root=root,
+            split="train",
+            transform=build_transform(name, image_size=image_size),
+            download=download,
+        )
+        test = (
+            datasets.Food101(
+                root=root,
+                split="test",
+                transform=build_transform(name, image_size=image_size),
+                download=download,
+            )
+            if include_test
+            else None
+        )
+        train_indices, val_indices = _food101_stratified_indices(
+            train_full,
+            val_fraction=float(cfg.get("val_fraction", 0.10)),
+            seed=int(cfg.get("split_seed", 42)),
+        )
         train = Subset(train_full, train_indices)
         val = Subset(val_full, val_indices)
     elif name == "fake":
@@ -168,6 +250,7 @@ def build_loaders(
         pin_memory=pin_memory,
         drop_last=bool(cfg.get("drop_last", True)),
         generator=train_generator,
+        persistent_workers=workers > 0,
     )
     val_loader = DataLoader(
         val_set,
@@ -176,6 +259,7 @@ def build_loaders(
         num_workers=workers,
         pin_memory=pin_memory,
         generator=val_generator,
+        persistent_workers=workers > 0,
     )
     test_loader = None
     if test_set is not None:
@@ -186,5 +270,6 @@ def build_loaders(
             num_workers=workers,
             pin_memory=pin_memory,
             generator=test_generator,
+            persistent_workers=workers > 0,
         )
     return train_loader, val_loader, test_loader
