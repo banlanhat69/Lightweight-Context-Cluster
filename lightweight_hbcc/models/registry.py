@@ -12,7 +12,7 @@ from .baselines import (
     shufflenet_v2_x1_0_cifar,
 )
 from .hbcc import HBCCNet
-from .food101 import hbcc_food101_best
+from .food101 import hbcc_food101_best, hbcc_food101_best100, hbcc_food101_fair
 
 
 MODEL_REGISTRY: dict[str, Callable[..., nn.Module]] = {
@@ -22,6 +22,8 @@ MODEL_REGISTRY: dict[str, Callable[..., nn.Module]] = {
     "shufflenet_v2_x1_0_cifar": shufflenet_v2_x1_0_cifar,
     "hbcc": HBCCNet,
     "hbcc_food101_best": hbcc_food101_best,
+    "hbcc_food101_fair": hbcc_food101_fair,
+    "hbcc_food101_best100": hbcc_food101_best100,
 }
 
 

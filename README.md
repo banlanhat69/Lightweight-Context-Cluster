@@ -1,30 +1,32 @@
 # Lightweight HBCC experiments
 
-## Food-101 224x224: canonical HBCC comparison
+## Food-101 224x224: best-effort 100-epoch comparison
 
 The Food-101 pipeline is source-based and uses
 [`notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb`](notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb)
 as its main entry point. It downloads `torchvision.datasets.Food101`, creates a
 fixed per-class split of 675 train / 75 validation / 250 held-out test images,
-and compares two randomly initialized models under the same CoC-style
-ImageNet training recipe:
+and compares two randomly initialized models under the same 100-epoch
+budget and held-out evaluation protocol:
 
-- `hbcc_food101_best`: the locked Food-101 HBCC architecture in
+- `hbcc_food101_best100`: the locked 2.5M Food-101 HBCC architecture in
   `lightweight_hbcc/models/food101.py`;
 - `resnet18_224`: standard torchvision ResNet-18 with `weights=None`.
 
-The train transform ports the original CoC ImageNet-1K defaults to Food-101:
-`RandomResizedCrop(224, scale=0.08..1.0)`, horizontal flip, RandAugment,
-ImageNet normalization, Random Erasing 0.25, Mixup 0.8, CutMix 1.0, and label
-smoothing 0.1. Validation/test use resize-to-249 then center-crop-to-224 and no
-random operation. Both models receive the identical recipe; ResNet-18 explicitly
-uses `weights=None`.
+The shared controls are the official Food-101 split, input/evaluation transform,
+batch size, seed, 100 epochs, validation checkpoint selection, and one final test.
+The optimization recipes are architecture-specific: HBCC uses AdamW with lighter
+augmentation and regularization, while ResNet-18 uses SGD with stronger
+augmentation. ResNet-18 explicitly uses `weights=None`.
 
-`hbcc_food101_best` has 2,566,391 total parameters (2,562,935 trainable). It
+`hbcc_food101_best100` has 2,566,391 total parameters (2,562,935 trainable). It
 keeps hard assignment and the four-stage hybrid design, while using uniform
-7x7 cluster regions, GroupNorm, positive similarity scales, stochastic depth,
-and a small training-only differentiable center-balance regularizer. The test
-split is evaluated only after selecting the best validation checkpoint.
+7x7 cluster regions, GroupNorm and positive similarity scales. Its 100-epoch
+recipe uses dropout 0.05, DropPath 0.08, and center-balance weight 0.0025. The
+test split is evaluated only after selecting the best validation checkpoint.
+
+The previous strict shared-hyperparameter protocol remains available as
+`configs/food101/hbcc_fair_150.yaml` and `resnet18_fair_150.yaml`.
 
 Command-line equivalent:
 
@@ -33,11 +35,11 @@ python tools/run_food101_experiments.py `
   --models hbcc resnet18 `
   --data-root data/food101 `
   --output runs/food101 `
-  --epochs 60
+  --epochs 100
 ```
 
 Các thí nghiệm CIFAR-10/CIFAR-100 cũ vẫn giữ giao thức không augmentation;
-recipe CoC ở trên chỉ áp dụng cho pipeline Food-101 mới.
+các recipe Best-100/Fair-150 chỉ áp dụng cho pipeline Food-101.
 
 ## Kiến trúc HBCC-Wide Stage 4 v1 đã khôi phục
 

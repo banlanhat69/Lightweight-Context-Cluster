@@ -25,6 +25,13 @@ _REMOVED_AUGMENTATION_KEYS = {
     "rrc_scale",
 }
 
+FOOD101_AUGMENTATION_RECIPES = {
+    "coc_food101_v1",
+    "fair_food101_v1",
+    "hbcc_best100_v1",
+    "resnet18_best100_v1",
+}
+
 
 class RandomResizedCropRandomInterpolation(transforms.RandomResizedCrop):
     """CoC/timm-style crop with a per-image bilinear/bicubic choice."""
@@ -129,17 +136,17 @@ def build_transform(name: str, image_size: int = 224) -> transforms.Compose:
 
 
 def build_food101_transform(cfg: dict[str, Any], training: bool) -> transforms.Compose:
-    """Build the Food-101 port of the official CoC ImageNet transform.
+    """Build a configured Food-101 train or deterministic evaluation transform.
 
-    torchvision's RandAugment is used as the dependency-free equivalent of
-    timm's ``rand-m9-mstd0.5-inc1`` policy. Validation follows CoC's 0.9
-    center-crop ratio. All tensors reaching a model are exactly ``image_size``.
+    CoC and fair recipes share the implementation but use different strengths.
+    Validation follows a configurable center-crop ratio. All tensors reaching
+    a model are exactly ``image_size``.
     """
 
     image_size = int(cfg.get("image_size", 224))
     augmentation = str(cfg.get("augmentation", "none")).lower()
     normalize = transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
-    if training and augmentation == "coc_food101_v1":
+    if training and augmentation in FOOD101_AUGMENTATION_RECIPES:
         scale = tuple(float(value) for value in cfg.get("rrc_scale", (0.08, 1.0)))
         ratio = tuple(float(value) for value in cfg.get("rrc_ratio", (0.75, 4.0 / 3.0)))
         interpolation = str(cfg.get("train_interpolation", "random")).lower()
@@ -181,9 +188,9 @@ def build_food101_transform(cfg: dict[str, Any], training: bool) -> transforms.C
                 ),
             ]
         )
-    if augmentation not in {"none", "coc_food101_v1"}:
+    if augmentation not in {"none", *FOOD101_AUGMENTATION_RECIPES}:
         raise ValueError(f"Unsupported Food-101 augmentation recipe: {augmentation}")
-    if augmentation == "coc_food101_v1":
+    if augmentation in FOOD101_AUGMENTATION_RECIPES:
         crop_pct = float(cfg.get("eval_crop_pct", 0.9))
         resize_size = int(round(image_size / crop_pct))
         return transforms.Compose(

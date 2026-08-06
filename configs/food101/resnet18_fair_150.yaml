@@ -1,0 +1,8 @@
+_base_: base_fair_150.yaml
+
+experiment:
+  name: food101_resnet18_scratch_fair150_seed42
+
+model:
+  name: resnet18_224
+

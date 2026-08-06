@@ -1,0 +1,40 @@
+_base_: base_best100.yaml
+
+protocol:
+  augmentation: resnet18_best100_v1
+  optimizer: sgd
+
+experiment:
+  name: food101_resnet18_scratch_best100_seed42
+
+model:
+  name: resnet18_224
+
+data:
+  augmentation: resnet18_best100_v1
+  rrc_scale: [0.20, 1.0]
+  rrc_ratio: [0.75, 1.3333333333]
+  train_interpolation: random
+  hflip: 0.5
+  randaugment_num_ops: 2
+  randaugment_magnitude: 9
+  randaugment_magnitude_std: 0.5
+  randaugment_num_magnitude_bins: 11
+  random_erasing: 0.15
+
+train:
+  optimizer: sgd
+  lr: 0.0125
+  min_lr: 0.00001
+  warmup_start_factor: 0.10
+  momentum: 0.90
+  nesterov: true
+  weight_decay: 0.0001
+  grad_clip_norm: null
+  label_smoothing: 0.10
+  mixup_alpha: 0.20
+  cutmix_alpha: 1.00
+  mixup_cutmix_prob: 0.60
+  mixup_switch_prob: 0.50
+  mixup_cutmix_off_epoch: 90
+

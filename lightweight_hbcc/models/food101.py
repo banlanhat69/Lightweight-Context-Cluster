@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from torch import nn
@@ -42,6 +43,28 @@ HBCC_FOOD101_BEST_CONFIG: dict[str, Any] = {
     "cluster_balance_temperature": 1.0,
 }
 
+HBCC_FOOD101_FAIR_CONFIG: dict[str, Any] = copy.deepcopy(
+    HBCC_FOOD101_BEST_CONFIG
+)
+HBCC_FOOD101_FAIR_CONFIG.update(
+    {
+        "drop_rate": 0.0,
+        "drop_path_rate": 0.0,
+        "cluster_balance_loss_weight": 0.0,
+    }
+)
+
+HBCC_FOOD101_BEST100_CONFIG: dict[str, Any] = copy.deepcopy(
+    HBCC_FOOD101_BEST_CONFIG
+)
+HBCC_FOOD101_BEST100_CONFIG.update(
+    {
+        "drop_rate": 0.05,
+        "drop_path_rate": 0.08,
+        "cluster_balance_loss_weight": 0.0025,
+    }
+)
+
 
 def hbcc_food101_best(num_classes: int = 101, **overrides: Any) -> nn.Module:
     """Canonical accuracy-oriented HBCC for 224x224 Food-101 experiments."""
@@ -53,3 +76,27 @@ def hbcc_food101_best(num_classes: int = 101, **overrides: Any) -> nn.Module:
             + ", ".join(unexpected)
         )
     return HBCCNet(num_classes=num_classes, **HBCC_FOOD101_BEST_CONFIG)
+
+
+def hbcc_food101_fair(num_classes: int = 101, **overrides: Any) -> nn.Module:
+    """Same inference architecture with HBCC-only regularization disabled."""
+
+    unexpected = sorted(overrides)
+    if unexpected:
+        raise ValueError(
+            "hbcc_food101_fair is a locked architecture; unexpected overrides: "
+            + ", ".join(unexpected)
+        )
+    return HBCCNet(num_classes=num_classes, **HBCC_FOOD101_FAIR_CONFIG)
+
+
+def hbcc_food101_best100(num_classes: int = 101, **overrides: Any) -> nn.Module:
+    """HBCC regularization tuned for the 100-epoch best-effort protocol."""
+
+    unexpected = sorted(overrides)
+    if unexpected:
+        raise ValueError(
+            "hbcc_food101_best100 is a locked architecture; unexpected overrides: "
+            + ", ".join(unexpected)
+        )
+    return HBCCNet(num_classes=num_classes, **HBCC_FOOD101_BEST100_CONFIG)

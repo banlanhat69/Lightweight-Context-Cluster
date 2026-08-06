@@ -1,0 +1,54 @@
+protocol:
+  purpose: food101_architecture_comparison_fair_training_protocol
+  dataset: food101
+  session: fair_150
+  augmentation: fair_food101_v1
+  pretrained: false
+  canonical: true
+
+data:
+  name: food101
+  root: data/food101
+  download: true
+  image_size: 224
+  augmentation: fair_food101_v1
+  # One shared, moderate recipe for both architectures.
+  rrc_scale: [0.20, 1.0]
+  rrc_ratio: [0.75, 1.3333333333]
+  train_interpolation: random
+  hflip: 0.5
+  randaugment_num_ops: 2
+  randaugment_magnitude: 7
+  randaugment_magnitude_std: 0.0
+  randaugment_num_magnitude_bins: 11
+  random_erasing: 0.10
+  eval_crop_pct: 0.90
+  val_fraction: 0.10
+  split_seed: 42
+  batch_size: 32
+  val_batch_size: 64
+  test_batch_size: 64
+  workers: 2
+  pin_memory: true
+  drop_last: true
+  loader_seed: 42
+
+train:
+  seed: 42
+  deterministic: false
+  epochs: 150
+  warmup_epochs: 5
+  lr: 0.0005
+  weight_decay: 0.05
+  grad_clip_norm: 1.0
+  label_smoothing: 0.10
+  mixup_alpha: 0.20
+  cutmix_alpha: 0.50
+  mixup_cutmix_prob: 0.50
+  mixup_switch_prob: 0.50
+  # Last 20 epochs use hard labels while retaining spatial augmentation.
+  mixup_cutmix_off_epoch: 130
+  amp: true
+  kd_method: none
+  kd_alpha: 0.0
+  skip_test: false

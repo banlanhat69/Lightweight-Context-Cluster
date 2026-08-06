@@ -75,7 +75,7 @@ def is_controlled_comparison(cfg: dict[str, Any]) -> bool:
     return "architecture_comparison" in purpose or "compare_model_architectures" in purpose
 
 
-def adamw_parameter_groups(
+def weight_decay_parameter_groups(
     model: torch.nn.Module,
     weight_decay: float,
 ) -> list[dict[str, Any]]:
@@ -358,7 +358,11 @@ def main() -> None:
         f"elapsed={time.perf_counter() - setup_start:.1f}s",
         flush=True,
     )
-    if cfg["model"].get("name") == "hbcc_food101_best" and not (
+    if cfg["model"].get("name") in {
+        "hbcc_food101_best",
+        "hbcc_food101_fair",
+        "hbcc_food101_best100",
+    } and not (
         2_400_000 <= param_count <= 2_700_000
     ):
         raise RuntimeError(
@@ -377,7 +381,11 @@ def main() -> None:
                 f"Model preflight expected logits {(1, expected_classes)}, "
                 f"got {tuple(sample_output.shape)}."
             )
-        if cfg["model"].get("name") == "hbcc_food101_best":
+        if cfg["model"].get("name") in {
+            "hbcc_food101_best",
+            "hbcc_food101_fair",
+            "hbcc_food101_best100",
+        }:
             feature_shapes = [
                 tuple(feature.shape[-2:])
                 for feature in model.forward_intermediates(sample)
@@ -394,21 +402,56 @@ def main() -> None:
         print(f"setup: loading checkpoint {args.resume}", flush=True)
         load_checkpoint(model, args.resume, device, strict=False)
 
-    optimizer = torch.optim.AdamW(
-        adamw_parameter_groups(
-            model,
-            weight_decay=float(train_cfg.get("weight_decay", 0.05)),
-        ),
-        lr=float(train_cfg.get("lr", 1e-3)),
+    optimizer_name = str(train_cfg.get("optimizer", "adamw")).lower()
+    parameter_groups = weight_decay_parameter_groups(
+        model,
+        weight_decay=float(train_cfg.get("weight_decay", 0.05)),
     )
+    if optimizer_name == "adamw":
+        optimizer = torch.optim.AdamW(
+            parameter_groups,
+            lr=float(train_cfg.get("lr", 1e-3)),
+        )
+    elif optimizer_name == "sgd":
+        optimizer = torch.optim.SGD(
+            parameter_groups,
+            lr=float(train_cfg.get("lr", 0.1)),
+            momentum=float(train_cfg.get("momentum", 0.9)),
+            nesterov=bool(train_cfg.get("nesterov", True)),
+        )
+    else:
+        raise ValueError("train.optimizer must be 'adamw' or 'sgd'.")
+    print(f"setup: optimizer={optimizer_name}", flush=True)
+    setup_metadata = {
+        "model": cfg["model"].get("name"),
+        "optimizer": optimizer_name,
+        "parameter_count": param_count,
+        "trainable_parameter_count": trainable_param_count,
+        "epoch_budget": int(train_cfg.get("epochs", 200)),
+        "pretrained": False,
+    }
+    with (output_dir / "setup.json").open("w", encoding="utf-8") as handle:
+        json.dump(setup_metadata, handle, indent=2)
     epochs = int(train_cfg.get("epochs", 200))
     warmup_epochs = int(train_cfg.get("warmup_epochs", 0))
     if warmup_epochs > 0 and epochs > warmup_epochs:
-        warmup = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.01, total_iters=warmup_epochs)
-        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs - warmup_epochs))
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=float(train_cfg.get("warmup_start_factor", 0.01)),
+            total_iters=warmup_epochs,
+        )
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, epochs - warmup_epochs),
+            eta_min=float(train_cfg.get("min_lr", 0.0)),
+        )
         scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs])
     else:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, epochs),
+            eta_min=float(train_cfg.get("min_lr", 0.0)),
+        )
     criterion = DistillationLoss(
         method=str(train_cfg.get("kd_method", "none")),
         temperature=float(train_cfg.get("kd_temperature", 4.0)),
@@ -429,6 +472,13 @@ def main() -> None:
     mixup_alpha = float(train_cfg.get("mixup_alpha", 0.0))
     cutmix_alpha = float(train_cfg.get("cutmix_alpha", 0.0))
     batch_augment = None
+    mixup_cutmix_off_epoch = int(
+        train_cfg.get("mixup_cutmix_off_epoch", train_cfg.get("epochs", 0))
+    )
+    if not 0 <= mixup_cutmix_off_epoch <= int(train_cfg.get("epochs", 0)):
+        raise ValueError(
+            "train.mixup_cutmix_off_epoch must be between 0 and train.epochs."
+        )
     if mixup_alpha > 0.0 or cutmix_alpha > 0.0:
         if has_teacher:
             raise ValueError("Mixup/CutMix are currently supported only for CE runs.")
@@ -463,7 +513,9 @@ def main() -> None:
                 if train_cfg.get("grad_clip_norm") is not None
                 else None
             ),
-            batch_augment=batch_augment,
+            batch_augment=(
+                batch_augment if epoch < mixup_cutmix_off_epoch else None
+            ),
         )
         val_metrics = evaluate(
             model,

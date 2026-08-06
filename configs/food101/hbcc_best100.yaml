@@ -1,0 +1,38 @@
+_base_: base_best100.yaml
+
+protocol:
+  augmentation: hbcc_best100_v1
+  optimizer: adamw
+
+experiment:
+  name: food101_hbcc_2p5m_best100_seed42
+
+model:
+  name: hbcc_food101_best100
+
+data:
+  augmentation: hbcc_best100_v1
+  rrc_scale: [0.30, 1.0]
+  rrc_ratio: [0.75, 1.3333333333]
+  train_interpolation: random
+  hflip: 0.5
+  randaugment_num_ops: 2
+  randaugment_magnitude: 7
+  randaugment_magnitude_std: 0.5
+  randaugment_num_magnitude_bins: 11
+  random_erasing: 0.05
+
+train:
+  optimizer: adamw
+  lr: 0.0008
+  min_lr: 0.000001
+  warmup_start_factor: 0.01
+  weight_decay: 0.03
+  grad_clip_norm: 1.0
+  label_smoothing: 0.05
+  mixup_alpha: 0.10
+  cutmix_alpha: 0.50
+  mixup_cutmix_prob: 0.35
+  mixup_switch_prob: 0.50
+  mixup_cutmix_off_epoch: 85
+

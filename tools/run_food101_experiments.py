@@ -13,19 +13,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_SCRIPT = PROJECT_ROOT / "tools" / "train.py"
 EXPERIMENTS = {
     "hbcc": {
-        "config": PROJECT_ROOT / "configs" / "food101" / "hbcc_2p5m_coc_recipe.yaml",
-        "run_name": "food101_hbcc_2p5m_coc_recipe_seed42",
+        "config": PROJECT_ROOT / "configs" / "food101" / "hbcc_best100.yaml",
+        "run_name": "food101_hbcc_2p5m_best100_seed42",
+        "mix_cooldown_epochs": 15,
     },
     "resnet18": {
-        "config": PROJECT_ROOT / "configs" / "food101" / "resnet18_scratch_coc_recipe.yaml",
-        "run_name": "food101_resnet18_scratch_coc_recipe_seed42",
+        "config": PROJECT_ROOT / "configs" / "food101" / "resnet18_best100.yaml",
+        "run_name": "food101_resnet18_scratch_best100_seed42",
+        "mix_cooldown_epochs": 10,
     },
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the canonical from-scratch Food-101 architecture comparison."
+        description="Run the 100-epoch best-effort Food-101 architecture comparison."
     )
     parser.add_argument(
         "--models",
@@ -35,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", default="runs/food101")
     parser.add_argument("--data-root", default="data/food101")
-    parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--limit-train-batches", type=int)
@@ -75,6 +77,9 @@ def main() -> None:
             f"data.root={data_root.as_posix()}",
             "--override",
             f"train.epochs={args.epochs}",
+            "--override",
+            "train.mixup_cutmix_off_epoch="
+            f"{max(0, args.epochs - int(spec['mix_cooldown_epochs']))}",
         ]
         if args.no_progress:
             command.append("--no-progress")
@@ -92,6 +97,8 @@ def main() -> None:
         records = read_jsonl(run_dir / "metrics.jsonl")
         validation = [record for record in records if "val_acc1" in record]
         tests = [record for record in records if record.get("phase") == "test"]
+        with (run_dir / "setup.json").open("r", encoding="utf-8") as handle:
+            setup = json.load(handle)
         if not validation or len(tests) != 1:
             raise RuntimeError(f"Incomplete metrics in {run_dir}")
         best = max(validation, key=lambda record: record["val_acc1"])
@@ -99,6 +106,8 @@ def main() -> None:
         rows.append(
             {
                 "model": model_key,
+                "optimizer": setup["optimizer"],
+                "parameters": setup["parameter_count"],
                 "best_epoch": int(best["epoch"]) + 1,
                 "best_val_acc1": best["val_acc1"],
                 "best_val_acc5": best.get("val_acc5"),
