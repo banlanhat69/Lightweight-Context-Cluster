@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from pathlib import Path
 import sys
 import time
@@ -9,6 +10,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import torch
 from torch.amp import GradScaler
 
@@ -43,13 +45,24 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train HBCC/CoC/baseline image classification models.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--output", default="runs")
-    parser.add_argument("--resume")
+    parser.add_argument(
+        "--resume",
+        help="Resume a run from latest.pth (best.pth is accepted but not recommended).",
+    )
     parser.add_argument("--teacher-config")
     parser.add_argument("--teacher-checkpoint")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--limit-train-batches", type=int)
     parser.add_argument("--limit-val-batches", type=int)
     parser.add_argument("--limit-test-batches", type=int)
+    parser.add_argument(
+        "--run-until-epoch",
+        type=int,
+        help=(
+            "Stop after this many total epochs while preserving the scheduler's full "
+            "train.epochs horizon. Useful for splitting one run across Kaggle sessions."
+        ),
+    )
     parser.add_argument("--skip-test", action="store_true", help="Skip final evaluation on the held-out test split.")
     parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars for notebook/log runs.")
     parser.add_argument("--print-every", type=int, default=1, help="Print an epoch summary every N epochs. Use 0 to print only the final epoch.")
@@ -70,9 +83,154 @@ def resolve_seed_config(cfg: dict[str, Any]) -> tuple[int, int, bool]:
     return seed, loader_seed, deterministic
 
 
-def is_controlled_comparison(cfg: dict[str, Any]) -> bool:
-    purpose = str(cfg.get("protocol", {}).get("purpose", "")).lower()
-    return "architecture_comparison" in purpose or "compare_model_architectures" in purpose
+def _resume_comparable_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return trajectory-defining settings while ignoring machine-local paths."""
+
+    comparable = {
+        section: dict(cfg.get(section, {}))
+        for section in ("protocol", "data", "train", "model")
+    }
+    for key in (
+        "root",
+        "download",
+        "workers",
+        "persistent_workers",
+        "pin_memory",
+    ):
+        comparable["data"].pop(key, None)
+    comparable["train"].pop("skip_test", None)
+    return comparable
+
+
+def validate_resume_checkpoint(
+    cfg: dict[str, Any],
+    checkpoint: dict[str, Any],
+    checkpoint_path: str | Path,
+) -> None:
+    """Reject accidental cross-model or cross-recipe resumes."""
+
+    if "epoch" not in checkpoint:
+        raise ValueError(f"Resume checkpoint has no completed epoch: {checkpoint_path}")
+    checkpoint_cfg = checkpoint.get("config")
+    if not isinstance(checkpoint_cfg, dict):
+        raise ValueError(
+            "Resume checkpoint must contain its full config. Use a latest.pth/best.pth "
+            "created by this project."
+        )
+    current = _resume_comparable_config(cfg)
+    saved = _resume_comparable_config(checkpoint_cfg)
+    mismatched = [
+        section for section in current if current[section] != saved.get(section)
+    ]
+    if int(checkpoint.get("format_version", 1)) >= 2:
+        current_data = cfg.get("data", {})
+        saved_data = checkpoint_cfg.get("data", {})
+        for key in ("workers", "persistent_workers"):
+            if (
+                current_data.get(key) != saved_data.get(key)
+                and "data" not in mismatched
+            ):
+                mismatched.append("data")
+    if mismatched:
+        raise ValueError(
+            "Resume config does not match the checkpoint in trajectory-defining "
+            f"sections: {', '.join(mismatched)}. Keep the model, recipe, batch size, "
+            "seed, and total epoch budget unchanged when resuming."
+        )
+
+
+def capture_rng_state(
+    train_loader: torch.utils.data.DataLoader,
+    val_loader: torch.utils.data.DataLoader,
+    test_loader: torch.utils.data.DataLoader | None,
+) -> dict[str, Any]:
+    """Capture process and DataLoader-generator RNG at an epoch boundary."""
+
+    state: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+        "train_loader": train_loader.generator.get_state(),
+        "val_loader": val_loader.generator.get_state(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    if test_loader is not None:
+        state["test_loader"] = test_loader.generator.get_state()
+    return state
+
+
+def restore_rng_state(
+    state: dict[str, Any],
+    train_loader: torch.utils.data.DataLoader,
+    val_loader: torch.utils.data.DataLoader,
+    test_loader: torch.utils.data.DataLoader | None,
+) -> None:
+    """Restore RNG captured by :func:`capture_rng_state`."""
+
+    required = ("python", "numpy", "torch", "train_loader", "val_loader")
+    missing = [key for key in required if key not in state]
+    if missing:
+        raise KeyError(f"Checkpoint RNG state is incomplete: {', '.join(missing)}")
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"].cpu())
+    train_loader.generator.set_state(state["train_loader"].cpu())
+    val_loader.generator.set_state(state["val_loader"].cpu())
+    if test_loader is not None and "test_loader" in state:
+        test_loader.generator.set_state(state["test_loader"].cpu())
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state_all([value.cpu() for value in state["cuda"]])
+
+
+def prepare_metrics_for_resume(
+    metrics_path: Path,
+    test_metrics_path: Path,
+    start_epoch: int,
+    checkpoint_history: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Restore/trim history and discard a stale final-test record."""
+
+    existing: list[dict[str, Any]] = []
+    if metrics_path.exists():
+        with metrics_path.open("r", encoding="utf-8") as handle:
+            existing = [json.loads(line) for line in handle if line.strip()]
+    candidates = []
+    for source in (existing, checkpoint_history):
+        candidates.append(
+            [
+                record
+                for record in source
+                if record.get("phase") != "test"
+                and int(record.get("epoch", -1)) < start_epoch
+            ]
+        )
+    history = max(candidates, key=len)
+    with metrics_path.open("w", encoding="utf-8") as handle:
+        for record in history:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    if test_metrics_path.exists():
+        test_metrics_path.unlink()
+    return history
+
+
+def cpu_model_state(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    """Clone a portable CPU copy of model weights for best-checkpoint recovery."""
+
+    return {
+        name: value.detach().cpu().clone()
+        for name, value in model.state_dict().items()
+    }
+
+
+def read_checkpoint_file(path: Path) -> dict[str, Any]:
+    try:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(path, map_location="cpu")
+    if not isinstance(checkpoint, dict):
+        raise TypeError(f"Checkpoint must be a mapping: {path}")
+    return checkpoint
 
 
 def weight_decay_parameter_groups(
@@ -226,6 +384,14 @@ def main() -> None:
     cfg.setdefault("model", {})["num_classes"] = cfg["model"].get("num_classes", num_classes_for_dataset(dataset_name))
     seed, loader_seed, deterministic = resolve_seed_config(cfg)
     train_cfg = cfg["train"]
+    epochs = int(train_cfg.get("epochs", 200))
+    run_until_epoch = (
+        int(args.run_until_epoch) if args.run_until_epoch is not None else epochs
+    )
+    if not 1 <= run_until_epoch <= epochs:
+        raise ValueError(
+            f"--run-until-epoch must be in [1, {epochs}], got {run_until_epoch}."
+        )
     has_teacher = validate_training_mode(cfg, args.teacher_config, args.teacher_checkpoint)
     kd_method = str(train_cfg.get("kd_method", "none"))
     kl_direction = {
@@ -285,11 +451,6 @@ def main() -> None:
         ),
     }
     seed_everything(seed, deterministic=deterministic)
-    if args.resume and is_controlled_comparison(cfg):
-        raise ValueError(
-            "Controlled-comparison runs do not support --resume because optimizer, scheduler, "
-            "and DataLoader RNG states are not restored. Start a fresh paired-seed run."
-        )
     skip_test = args.skip_test or bool(train_cfg.get("skip_test", False))
     device = resolve_device(args.device)
     teacher = None
@@ -339,7 +500,10 @@ def main() -> None:
         flush=True,
     )
     print("setup: building data loaders...", flush=True)
-    train_loader, val_loader, test_loader = build_loaders(cfg.get("data", {}), include_test=not skip_test)
+    train_loader, val_loader, test_loader = build_loaders(
+        cfg.get("data", {}),
+        include_test=not skip_test and run_until_epoch == epochs,
+    )
     print(
         "setup: data ready "
         f"train_samples={len(train_loader.dataset)} train_batches={len(train_loader)} "
@@ -398,9 +562,17 @@ def main() -> None:
                 )
             print(f"setup: HBCC feature shapes={feature_shapes}", flush=True)
     model.train(was_training)
+    resume_checkpoint: dict[str, Any] | None = None
+    resume_path: Path | None = None
     if args.resume:
-        print(f"setup: loading checkpoint {args.resume}", flush=True)
-        load_checkpoint(model, args.resume, device, strict=False)
+        resume_path = Path(args.resume).expanduser().resolve()
+        if not resume_path.is_file():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        print(f"setup: validating resume checkpoint {resume_path}", flush=True)
+        resume_checkpoint = read_checkpoint_file(resume_path)
+        resume_model_state = resume_checkpoint.get("model", resume_checkpoint)
+        model.load_state_dict(resume_model_state, strict=True)
+        validate_resume_checkpoint(cfg, resume_checkpoint, resume_path)
 
     optimizer_name = str(train_cfg.get("optimizer", "adamw")).lower()
     parameter_groups = weight_decay_parameter_groups(
@@ -428,11 +600,22 @@ def main() -> None:
         "parameter_count": param_count,
         "trainable_parameter_count": trainable_param_count,
         "epoch_budget": int(train_cfg.get("epochs", 200)),
+        "run_until_epoch": run_until_epoch,
         "pretrained": False,
+        "resumed_from": str(resume_path) if resume_path is not None else None,
+        "resume_completed_epochs": (
+            int(resume_checkpoint["epoch"]) + 1
+            if resume_checkpoint is not None
+            else 0
+        ),
+        "checkpoint_format_version": (
+            int(resume_checkpoint.get("format_version", 1))
+            if resume_checkpoint is not None
+            else None
+        ),
     }
     with (output_dir / "setup.json").open("w", encoding="utf-8") as handle:
         json.dump(setup_metadata, handle, indent=2)
-    epochs = int(train_cfg.get("epochs", 200))
     warmup_epochs = int(train_cfg.get("warmup_epochs", 0))
     if warmup_epochs > 0 and epochs > warmup_epochs:
         warmup = torch.optim.lr_scheduler.LinearLR(
@@ -492,10 +675,149 @@ def main() -> None:
         )
     amp = bool(train_cfg.get("amp", True))
     scaler = GradScaler(device.type, enabled=amp and device.type == "cuda")
-    print(f"train: starting epochs={epochs} skip_test={skip_test}", flush=True)
+    start_epoch = 0
     best_acc = 0.0
     best_epoch = -1
-    for epoch in range(epochs):
+    best_model_state: dict[str, torch.Tensor] | None = None
+    history: list[dict[str, Any]] = []
+    if resume_checkpoint is not None:
+        start_epoch = int(resume_checkpoint["epoch"]) + 1
+        if start_epoch > run_until_epoch:
+            raise ValueError(
+                f"Checkpoint already has {start_epoch} completed epochs, beyond "
+                f"--run-until-epoch={run_until_epoch}."
+            )
+        if "optimizer" not in resume_checkpoint:
+            raise ValueError("Resume checkpoint does not contain optimizer state.")
+        scheduler_state = resume_checkpoint.get("scheduler")
+        if scheduler_state is None:
+            # Legacy project checkpoints stored the optimizer but not the scheduler.
+            # Advance a fresh scheduler to the completed epoch, then restore the exact
+            # optimizer LR/momentum state. This is the closest safe compatibility path.
+            for _ in range(start_epoch):
+                scheduler.step()
+            print(
+                "resume warning: legacy checkpoint has no scheduler state; "
+                "the schedule was reconstructed from its saved config.",
+                flush=True,
+            )
+        optimizer.load_state_dict(resume_checkpoint["optimizer"])
+        if scheduler_state is not None:
+            scheduler.load_state_dict(scheduler_state)
+        if "scaler" in resume_checkpoint:
+            scaler.load_state_dict(resume_checkpoint["scaler"])
+        else:
+            print(
+                "resume warning: legacy checkpoint has no AMP scaler state.",
+                flush=True,
+            )
+        if batch_augment is not None:
+            batch_augment_state = resume_checkpoint.get("batch_augment")
+            if batch_augment_state is not None:
+                batch_augment.load_state_dict(batch_augment_state)
+            else:
+                print(
+                    "resume warning: legacy checkpoint has no Mixup/CutMix RNG state.",
+                    flush=True,
+                )
+        checkpoint_history = resume_checkpoint.get("history", [])
+        if not isinstance(checkpoint_history, list):
+            raise TypeError("Checkpoint history must be a list of epoch records.")
+        history = prepare_metrics_for_resume(
+            metrics_path,
+            test_metrics_path,
+            start_epoch,
+            checkpoint_history,
+        )
+        best_acc = float(resume_checkpoint.get("best_acc1", 0.0))
+        best_epoch = int(resume_checkpoint.get("best_epoch", -1))
+        embedded_best = resume_checkpoint.get("best_model")
+        assert resume_path is not None
+        output_best_path = output_dir / "best.pth"
+        output_best_valid = False
+        if isinstance(embedded_best, dict):
+            best_model_state = embedded_best
+        best_candidates = [output_best_path, resume_path.with_name("best.pth")]
+        for candidate in best_candidates:
+            if not candidate.is_file():
+                continue
+            candidate_checkpoint = read_checkpoint_file(candidate)
+            try:
+                validate_resume_checkpoint(cfg, candidate_checkpoint, candidate)
+            except ValueError:
+                continue
+            if int(candidate_checkpoint.get("epoch", -1)) != best_epoch:
+                continue
+            candidate_model = candidate_checkpoint.get("model")
+            if isinstance(candidate_model, dict):
+                if best_model_state is None:
+                    best_model_state = candidate_model
+                if candidate.resolve() != output_best_path.resolve():
+                    save_checkpoint(candidate_checkpoint, output_best_path)
+                output_best_valid = True
+                break
+        if best_model_state is None and best_epoch == int(resume_checkpoint["epoch"]):
+            best_model_state = cpu_model_state(model)
+        if best_model_state is None:
+            raise FileNotFoundError(
+                "The resume checkpoint does not embed the previous best weights. "
+                "For a legacy latest.pth, upload its matching best.pth in the same "
+                "directory (or resume from best.pth and accept restarting at that epoch)."
+            )
+        if not output_best_valid:
+            recovered_best = {
+                key: value
+                for key, value in resume_checkpoint.items()
+                if key
+                not in {
+                    "optimizer",
+                    "scheduler",
+                    "scaler",
+                    "rng_state",
+                    "best_model",
+                }
+            }
+            recovered_best.update(
+                {
+                    "checkpoint_role": "evaluation_only_recovered_best",
+                    "epoch": best_epoch,
+                    "model": best_model_state,
+                }
+            )
+            save_checkpoint(recovered_best, output_best_path)
+        rng_state = resume_checkpoint.get("rng_state")
+        if rng_state is not None:
+            restore_rng_state(
+                rng_state,
+                train_loader,
+                val_loader,
+                test_loader,
+            )
+        else:
+            print(
+                "resume warning: legacy checkpoint has no process/DataLoader RNG state; "
+                "continuation is valid but not bitwise-identical to an uninterrupted run.",
+                flush=True,
+            )
+        for heavy_key in ("model", "optimizer", "scheduler", "scaler", "rng_state"):
+            resume_checkpoint.pop(heavy_key, None)
+        del resume_model_state
+        print(
+            f"resume: completed_epochs={start_epoch} next_epoch={start_epoch + 1} "
+            f"best_epoch={best_epoch + 1 if best_epoch >= 0 else 'n/a'} "
+            f"best_val_acc1={best_acc:.2f}",
+            flush=True,
+        )
+    if start_epoch == run_until_epoch:
+        print("train: no epochs remain in this session.", flush=True)
+    else:
+        print(
+            f"train: starting epoch={start_epoch + 1} "
+            f"run_until_epoch={run_until_epoch} total_epochs={epochs} "
+            f"skip_test={skip_test}",
+            flush=True,
+        )
+    for epoch in range(start_epoch, run_until_epoch):
         train_metrics = train_one_epoch(
             model,
             train_loader,
@@ -529,22 +851,39 @@ def main() -> None:
         scheduler.step()
         record = {"epoch": epoch, "lr": scheduler.get_last_lr()[0], **train_metrics, **val_metrics}
         write_metrics(record, metrics_path)
+        history.append(record)
         is_best = val_metrics["val_acc1"] >= best_acc
         if is_best:
             best_acc = val_metrics["val_acc1"]
             best_epoch = epoch
+            best_model_state = cpu_model_state(model)
         checkpoint = {
+            "format_version": 2,
             "epoch": epoch,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "scaler": scaler.state_dict(),
+            "rng_state": capture_rng_state(
+                train_loader,
+                val_loader,
+                test_loader,
+            ),
+            "batch_augment": (
+                batch_augment.state_dict() if batch_augment is not None else None
+            ),
             "best_acc1": best_acc,
             "best_epoch": best_epoch,
+            "best_model": best_model_state,
+            "history": history,
             "config": cfg,
         }
         save_checkpoint(checkpoint, output_dir / "latest.pth")
         if is_best:
-            save_checkpoint(checkpoint, output_dir / "best.pth")
-        should_print = epoch == epochs - 1
+            best_checkpoint = dict(checkpoint)
+            best_checkpoint.pop("best_model", None)
+            save_checkpoint(best_checkpoint, output_dir / "best.pth")
+        should_print = epoch == run_until_epoch - 1
         if args.print_every > 0:
             should_print = should_print or (epoch % args.print_every == 0)
         if should_print:
@@ -573,7 +912,19 @@ def main() -> None:
                 print(json.dumps(record, indent=2))
 
     best_path = output_dir / "best.pth"
-    if not skip_test and best_path.exists():
+    training_complete = run_until_epoch == epochs
+    if not training_complete:
+        print(
+            f"train: paused after {run_until_epoch}/{epochs} epochs; "
+            f"resume from {output_dir / 'latest.pth'}",
+            flush=True,
+        )
+    if not skip_test and training_complete:
+        if not best_path.exists():
+            raise FileNotFoundError(
+                "Final test requires best.pth, but it could not be recovered from the "
+                "resume artifacts and no later epoch produced a new best checkpoint."
+            )
         if test_loader is None:
             raise RuntimeError("Final test evaluation was requested, but no test loader was created.")
         load_checkpoint(model, best_path, device, strict=True)
@@ -586,7 +937,13 @@ def main() -> None:
             progress=not args.no_progress,
             prefix="test",
         )
-        test_record = {"phase": "test", "epoch": best_epoch, "checkpoint": str(best_path.name), **test_metrics}
+        test_record = {
+            "phase": "test",
+            "epoch": best_epoch,
+            "best_val_acc1": best_acc,
+            "checkpoint": str(best_path.name),
+            **test_metrics,
+        }
         write_metrics(test_record, metrics_path)
         with test_metrics_path.open("w", encoding="utf-8") as f:
             json.dump(test_record, f, indent=2)

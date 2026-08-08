@@ -1,29 +1,30 @@
 # Lightweight HBCC experiments
 
-## Food-101 224x224: best-effort 100-epoch comparison
+## Food-101 224x224: two-stage 200-epoch comparison
 
 The Food-101 pipeline is source-based and uses
 [`notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb`](notebooks/food101_hbcc_vs_resnet18_kaggle.ipynb)
 as its main entry point. It downloads `torchvision.datasets.Food101`, creates a
 fixed per-class split of 675 train / 75 validation / 250 held-out test images,
-and compares two randomly initialized models under the same 100-epoch
-budget and held-out evaluation protocol:
+and compares two randomly initialized models under the same 200-epoch
+budget, split into two resumable 100-epoch Kaggle sessions:
 
 - `hbcc_food101_best100`: the locked 2.5M Food-101 HBCC architecture in
   `lightweight_hbcc/models/food101.py`;
 - `resnet18_224`: standard torchvision ResNet-18 with `weights=None`.
 
 The shared controls are the official Food-101 split, input/evaluation transform,
-batch size, seed, 100 epochs, validation checkpoint selection, and one final test.
+batch size, seed, 200 epochs, validation checkpoint selection, and one final test.
 The optimization recipes are architecture-specific: HBCC uses AdamW with lighter
 augmentation and regularization, while ResNet-18 uses SGD with stronger
 augmentation. ResNet-18 explicitly uses `weights=None`.
 
 `hbcc_food101_best100` has 2,566,391 total parameters (2,562,935 trainable). It
 keeps hard assignment and the four-stage hybrid design, while using uniform
-7x7 cluster regions, GroupNorm and positive similarity scales. Its 100-epoch
-recipe uses dropout 0.05, DropPath 0.08, and center-balance weight 0.0025. The
-test split is evaluated only after selecting the best validation checkpoint.
+7x7 cluster regions, GroupNorm and positive similarity scales. Its recipe uses
+dropout 0.05, DropPath 0.08, and center-balance weight 0.0025. The
+test split is not touched after session one; it is evaluated only after session
+two selects the best validation checkpoint across all 200 epochs.
 
 The previous strict shared-hyperparameter protocol remains available as
 `configs/food101/hbcc_fair_150.yaml` and `resnet18_fair_150.yaml`.
@@ -35,8 +36,29 @@ python tools/run_food101_experiments.py `
   --models hbcc resnet18 `
   --data-root data/food101 `
   --output runs/food101 `
-  --epochs 100
+  --epochs 200 `
+  --run-until-epoch 100
 ```
+
+To continue interrupted runs, set `RESUME_CHECKPOINTS` in the main notebook or
+pass model-specific checkpoints to the runner:
+
+```powershell
+python tools/run_food101_experiments.py `
+  --models hbcc resnet18 `
+  --resume-hbcc path/to/hbcc/latest.pth `
+  --resume-resnet18 path/to/resnet18/latest.pth `
+  --epochs 200 `
+  --run-until-epoch 200
+```
+
+For session one, omit both resume flags and use `--run-until-epoch 100`. For
+session two, provide both epoch-100 `latest.pth` files and use
+`--run-until-epoch 200`. `--epochs` remains the original 200-epoch scheduler
+horizon in both sessions. New-format `latest.pth` files
+restore model/optimizer/scheduler/scaler states, best-selection state, metric
+history, and process/DataLoader/Mixup-CutMix RNG states. Keep `best.pth` beside
+a legacy `latest.pth` so the previous best validation weights can be recovered.
 
 Các thí nghiệm CIFAR-10/CIFAR-100 cũ vẫn giữ giao thức không augmentation;
 các recipe Best-100/Fair-150 chỉ áp dụng cho pipeline Food-101.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import math
+from typing import Any
 
 import numpy as np
 import torch
@@ -36,6 +38,22 @@ class MixupCutmix:
             raise ValueError("probability must be in [0, 1].")
         if not 0.0 <= self.switch_probability <= 1.0:
             raise ValueError("switch_probability must be in [0, 1].")
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return both RNG states so an interrupted run can resume exactly."""
+
+        return {
+            "numpy_rng": copy.deepcopy(self.numpy_rng.bit_generator.state),
+            "torch_generator": self.torch_generator.get_state(),
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore RNG states saved by :meth:`state_dict`."""
+
+        if "numpy_rng" not in state or "torch_generator" not in state:
+            raise KeyError("MixupCutmix state must contain NumPy and Torch RNG states.")
+        self.numpy_rng.bit_generator.state = copy.deepcopy(state["numpy_rng"])
+        self.torch_generator.set_state(state["torch_generator"].cpu())
 
     def _sample_beta(self, alpha: float) -> float:
         if alpha <= 0.0:

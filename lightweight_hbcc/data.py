@@ -374,6 +374,7 @@ def build_loaders(
     test_batch_size = int(cfg.get("test_batch_size", val_batch_size))
     workers = int(cfg.get("workers", 2))
     pin_memory = bool(cfg.get("pin_memory", True))
+    persistent_workers = bool(cfg.get("persistent_workers", workers > 0)) and workers > 0
     loader_seed = int(cfg.get("loader_seed", 0))
     train_generator = torch.Generator().manual_seed(loader_seed)
     val_generator = torch.Generator().manual_seed(loader_seed + 1)
@@ -386,7 +387,7 @@ def build_loaders(
         pin_memory=pin_memory,
         drop_last=bool(cfg.get("drop_last", True)),
         generator=train_generator,
-        persistent_workers=workers > 0,
+        persistent_workers=persistent_workers,
     )
     val_loader = DataLoader(
         val_set,
@@ -395,7 +396,7 @@ def build_loaders(
         num_workers=workers,
         pin_memory=pin_memory,
         generator=val_generator,
-        persistent_workers=workers > 0,
+        persistent_workers=persistent_workers,
     )
     test_loader = None
     if test_set is not None:
@@ -406,6 +407,6 @@ def build_loaders(
             num_workers=workers,
             pin_memory=pin_memory,
             generator=test_generator,
-            persistent_workers=workers > 0,
+            persistent_workers=persistent_workers,
         )
     return train_loader, val_loader, test_loader

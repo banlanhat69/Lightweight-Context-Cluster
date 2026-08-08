@@ -5,7 +5,7 @@ protocol:
   optimizer: adamw
 
 experiment:
-  name: food101_hbcc_2p5m_best100_seed42
+  name: food101_hbcc_2p5m_2x100_seed42
 
 model:
   name: hbcc_food101_best100
@@ -34,5 +34,4 @@ train:
   cutmix_alpha: 0.50
   mixup_cutmix_prob: 0.35
   mixup_switch_prob: 0.50
-  mixup_cutmix_off_epoch: 85
-
+  mixup_cutmix_off_epoch: 185

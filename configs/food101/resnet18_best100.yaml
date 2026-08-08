@@ -5,7 +5,7 @@ protocol:
   optimizer: sgd
 
 experiment:
-  name: food101_resnet18_scratch_best100_seed42
+  name: food101_resnet18_scratch_2x100_seed42
 
 model:
   name: resnet18_224
@@ -36,5 +36,4 @@ train:
   cutmix_alpha: 1.00
   mixup_cutmix_prob: 0.60
   mixup_switch_prob: 0.50
-  mixup_cutmix_off_epoch: 90
-
+  mixup_cutmix_off_epoch: 190
